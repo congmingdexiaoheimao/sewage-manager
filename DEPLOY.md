@@ -17,18 +17,22 @@
 
 ### 1.2 本地配置并推送
 
+**在你的电脑上**打开项目目录（ sewage-manager-main 文件夹），右键 "Git Bash Here"，然后执行：
+
 ```bash
 # 设置 git 用户信息（如未设置）
 git config user.name "你的名字"
 git config user.email "你的邮箱"
 
-# 添加远程仓库（替换 YOUR_USERNAME 为你的 GitHub 用户名）
-git remote add origin https://github.com/YOUR_USERNAME/sewage-manager.git
+# 添加远程仓库
+git remote add origin https://github.com/congmingdexiaohemao/sewage-manager.git
 
 # 推送代码
 git branch -M main
 git push -u origin main
 ```
+
+> 💡 如果提示输入密码，用 GitHub Personal Access Token 代替密码（https://github.com/settings/tokens 生成，勾选 `repo` 权限）
 
 ---
 
