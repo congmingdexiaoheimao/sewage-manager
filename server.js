@@ -1998,6 +1998,15 @@ app.post('/api/seed', authMiddleware, (req, res) => {
 function round1(v) { return Math.round(v * 10) / 10; }
 function round2(v) { return Math.round(v * 100) / 100; }
 
+// ==================== 健康检查 + 微信域名校验 ====================
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', version: '4.4', db: dbType, uptime: process.uptime() });
+});
+
+// 微信小程序业务域名校验文件支持
+// 将校验文件放在 public/ 目录下即可，如 public/WX_verify_xxx.txt
+// 访问 https://域名/WX_verify_xxx.txt 即可通过校验
+
 // ==================== 启动服务 ====================
   app.listen(PORT, () => {
     console.log('污水处理厂运行管理系统 v4.0 (' + dbType + ')');

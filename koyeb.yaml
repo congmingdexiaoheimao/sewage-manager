@@ -1,0 +1,17 @@
+# Koyeb 部署配置
+# 详细部署步骤见 DEPLOY_KOYEB.md
+
+services:
+  - name: sewage-manager
+    instance_type: nano
+    regions:
+      - par
+    ports:
+      - port: 3000
+        protocol: http
+    health_checks:
+      - protocol: http
+        port: 3000
+        path: /api/health
+        interval: 30s
+        timeout: 5s

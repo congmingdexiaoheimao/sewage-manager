@@ -8,3 +8,4 @@ sewage_data.json
 *.db-wal
 *.db-shm
 sewage_data.db
+debug.log
