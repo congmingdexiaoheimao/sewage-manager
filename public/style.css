@@ -194,8 +194,34 @@ tr:hover td { background: #fafafa; }
 .inv-item .inv-meta { font-size: 11px; color: var(--text-secondary); }
 
 /* ===== Charts ===== */
-.chart-container { position: relative; width: 100%; height: 260px; margin: 8px 0; }
+.chart-container { position: relative; width: 100%; height: 320px; margin: 8px 0; }
+.chart-container.tall { height: 420px; }
 .chart-container canvas { width: 100% !important; }
+.chart-fullscreen .modal-content { width: 95vw !important; max-width: 1200px; max-height: 95vh; border-radius: 12px; }
+.chart-fullscreen .chart-container { height: 60vh; min-height: 400px; }
+
+/* ===== Trend Stats ===== */
+.trend-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 12px; }
+.trend-stat-item { background: #fafafa; border-radius: 8px; padding: 10px 12px; border-left: 3px solid var(--primary); }
+.trend-stat-item.danger { border-left-color: var(--danger); }
+.trend-stat-item.warning { border-left-color: var(--warning); }
+.trend-stat-item.success { border-left-color: var(--success); }
+.trend-stat-item .ts-label { font-size: 11px; color: var(--text-secondary); margin-bottom: 2px; }
+.trend-stat-item .ts-value { font-size: 16px; font-weight: 700; }
+.trend-stat-item .ts-sub { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.trend-stat-item .ts-sub .exceed { color: var(--danger); font-weight: 600; }
+.trend-stat-item .ts-sub .comply { color: var(--success); font-weight: 600; }
+
+/* ===== Series Toggle ===== */
+.series-toggle { display: inline-flex; border-radius: 16px; overflow: hidden; border: 1px solid var(--border); margin-left: 8px; }
+.series-btn { padding: 4px 10px; font-size: 11px; border: none; background: #fff; cursor: pointer; transition: all 0.2s; }
+.series-btn:hover { background: #f0f0f0; }
+.series-btn.active { background: var(--primary); color: #fff; }
+
+/* ===== Threshold Legend ===== */
+.threshold-legend { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0 4px; padding: 8px; background: #fafafa; border-radius: 6px; }
+.threshold-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-secondary); }
+.threshold-line { width: 20px; height: 2px; border-top: 2px dashed; }
 
 /* ===== Filters ===== */
 .filter-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }

@@ -514,42 +514,228 @@
       } catch (e) { toast('导出失败', 'error'); }
     }
 
-    // ==================== 趋势图 ====================
+    // ==================== 趋势图（增强版） ====================
+    let currentTrendType = '';
+    let currentTrendRange = 7;
+    let currentTrendSeries = 'east';
+
     async function openTrends(type) {
       const names = { water: '进出水水质趋势', do: '各池DO波动', sludge: '污泥指标趋势', chemical: '药剂投加趋势' };
-      let html = '<div class="modal-header"><h3>📈 ' + names[type] + '</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
-      html += '<div class="modal-body"><div class="filter-bar"><button class="filter-chip active" onclick="loadTrendChart(\'' + type + '\',7)">近7天</button><button class="filter-chip" onclick="loadTrendChart(\'' + type + '\',30)">近30天</button></div>';
-      html += '<div class="chart-container"><canvas id="trendChart"></canvas></div></div>';
+      currentTrendType = type;
+      currentTrendRange = 7;
+      currentTrendSeries = 'east';
+
+      let html = '<div class="modal-header"><h3>📈 ' + names[type] + '</h3><div style="display:flex;gap:6px;align-items:center;">';
+      if (type === 'do') {
+        html += '<div class="series-toggle">';
+        html += '<button class="series-btn active" id="seriesEast" onclick="switchSeries(\'east\')">东系列</button>';
+        html += '<button class="series-btn" id="seriesWest" onclick="switchSeries(\'west\')">西系列</button>';
+        html += '<button class="series-btn" id="seriesBoth" onclick="switchSeries(\'both\')">对比</button>';
+        html += '</div>';
+      }
+      html += '<button class="modal-close" onclick="closeModal()">&times;</button></div></div>';
+      html += '<div class="modal-body">';
+      html += '<div class="filter-bar">';
+      html += '<button class="filter-chip active" id="range7" onclick="loadTrendChart(\'' + type + '\',7)">近7天</button>';
+      html += '<button class="filter-chip" id="range30" onclick="loadTrendChart(\'' + type + '\',30)">近30天</button>';
+      html += '<button class="filter-chip" onclick="toggleFullscreen()" style="margin-left:auto;">⛶ 全屏</button>';
+      html += '</div>';
+      html += '<div id="thresholdLegend"></div>';
+      html += '<div class="chart-container" id="trendChartWrap"><canvas id="trendChart"></canvas></div>';
+      html += '<div id="trendStats"></div>';
+      html += '</div>';
       openModal(html);
       await loadTrendChart(type, 7);
     }
 
+    function switchSeries(s) {
+      currentTrendSeries = s;
+      document.querySelectorAll('.series-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById('series' + s.charAt(0).toUpperCase() + s.slice(1)).classList.add('active');
+      loadTrendChart(currentTrendType, currentTrendRange);
+    }
+
+    function toggleFullscreen() {
+      const overlay = document.querySelector('.modal-overlay');
+      if (overlay) overlay.classList.toggle('chart-fullscreen');
+    }
+
     async function loadTrendChart(type, range) {
-      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
-      event.target.classList.add('active');
+      currentTrendRange = range;
+      document.querySelectorAll('.filter-chip[id^="range"]').forEach(c => c.classList.remove('active'));
+      const btn = document.getElementById('range' + range);
+      if (btn) btn.classList.add('active');
+
       try {
-        const res = await fetch(API + '/api/trends?type=' + type + '&range=' + range, { headers: authHeaders() });
+        const seriesParam = type === 'do' ? '&series=' + currentTrendSeries : '';
+        const res = await fetch(API + '/api/trends?type=' + type + '&range=' + range + seriesParam, { headers: authHeaders() });
         const data = await res.json();
 
         const ctx = document.getElementById('trendChart');
         if (!ctx) return;
         if (chartInstances.trend) chartInstances.trend.destroy();
 
+        // 构建阈值注解线（通过annotation plugin或手动dataset）
+        const thresholdDatasets = (data.thresholds || []).map(t => ({
+          label: t.label,
+          data: new Array(data.labels.length).fill(t.value),
+          borderColor: t.color,
+          borderDash: t.dash || [6, 4],
+          borderWidth: 1.5,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          fill: false,
+          yAxisID: t.yAxisID || undefined,
+        }));
+
+        // 构建阈值图例
+        const legendDiv = document.getElementById('thresholdLegend');
+        if (legendDiv && data.thresholds && data.thresholds.length > 0) {
+          legendDiv.innerHTML = '<div class="threshold-legend">' +
+            data.thresholds.map(t => '<div class="threshold-item"><div class="threshold-line" style="border-color:' + t.color + ';"></div>' + t.label + '</div>').join('') +
+            '</div>';
+        } else if (legendDiv) {
+          legendDiv.innerHTML = '';
+        }
+
+        const allDatasets = [...data.datasets, ...thresholdDatasets];
+
+        const isSludge = type === 'sludge';
+        const isDO = type === 'do';
+
         chartInstances.trend = new Chart(ctx, {
           type: 'line',
-          data: data,
+          data: { labels: data.labels, datasets: allDatasets },
           options: {
             responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, padding: 10, font: { size: 10 } } } },
-            scales: {
-              y: { beginAtZero: true, ticks: { font: { size: 10 } }, title: { display: true, text: type === 'do' ? 'DO (mg/L)' : type === 'sludge' ? 'SV30 (%)' : 'mg/L', font: { size: 10 } } },
-              y1: type === 'sludge' ? { position: 'right', beginAtZero: true, ticks: { font: { size: 10 } }, title: { display: true, text: 'MLSS (mg/L)', font: { size: 10 } }, grid: { drawOnChartArea: false } } : undefined,
-              x: { ticks: { font: { size: 10 }, maxTicksLimit: 8 } }
+            plugins: {
+              legend: { position: 'bottom', labels: { boxWidth: 12, padding: 8, font: { size: 10 }, usePointStyle: true } },
+              tooltip: {
+                mode: 'index', intersect: false,
+                callbacks: {
+                  label: function(ctx) {
+                    if (ctx.dataset.label && ctx.parsed.y !== null) {
+                      const unit = isDO ? ' mg/L' : isSludge ? (ctx.dataset.yAxisID === 'y1' ? ' mg/L' : ' %') : ' mg/L';
+                      return ctx.dataset.label + ': ' + ctx.parsed.y + unit;
+                    }
+                    return '';
+                  }
+                }
+              }
             },
-            interaction: { intersect: false, mode: 'index' }
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: { font: { size: 10 } },
+                title: { display: true, text: isDO ? 'DO (mg/L)' : isSludge ? 'SV30 (%)' : '浓度 (mg/L)', font: { size: 10 } },
+              },
+              y1: isSludge ? {
+                position: 'right', beginAtZero: true,
+                ticks: { font: { size: 10 } },
+                title: { display: true, text: 'MLSS (mg/L)', font: { size: 10 } },
+                grid: { drawOnChartArea: false }
+              } : undefined,
+              x: { ticks: { font: { size: 10 }, maxTicksLimit: range <= 7 ? 7 : 10 } }
+            },
+            interaction: { intersect: false, mode: 'index' },
+            elements: { point: { radius: 3, hoverRadius: 5 } }
           }
         });
-      } catch (e) { console.error(e); }
+
+        // 渲染统计摘要
+        renderTrendStats(type, data.summary, range);
+
+      } catch (e) { console.error(e); showToast('趋势数据加载失败', 'error'); }
+    }
+
+    function renderTrendStats(type, summary, range) {
+      const statsDiv = document.getElementById('trendStats');
+      if (!statsDiv || !summary || Object.keys(summary).length === 0) return;
+
+      let html = '<div style="font-size:12px;color:#8c8c8c;margin:8px 0 4px;">📊 统计摘要（' + (summary.dataDays || 0) + '/' + (summary.totalDays || range) + '天有数据）</div>';
+
+      if (type === 'do') {
+        const poolNames = { anaerobic: '厌氧池', anoxic: '缺氧池', aerobic1: '好氧池1', aerobic2: '好氧池2', aerobic3: '好氧池3', aerobic4: '好氧池4' };
+        html += '<div class="trend-stats">';
+        for (const [key, name] of Object.entries(poolNames)) {
+          if (!summary[key]) continue;
+          const s = summary[key];
+          const isExceed = s.exceedCount > 0;
+          const cls = isExceed ? 'danger' : 'success';
+          let thresholdText = '';
+          if (key === 'anaerobic') thresholdText = '上限' + s.threshold;
+          else if (key === 'anoxic') thresholdText = '上限' + s.threshold;
+          else thresholdText = s.upperLimit ? s.threshold + '~' + s.upperLimit : '≥' + s.threshold;
+
+          html += '<div class="trend-stat-item ' + cls + '">';
+          html += '<div class="ts-label">' + name + '</div>';
+          html += '<div class="ts-value">' + (s.avg !== null ? s.avg : '-') + ' <small style="font-size:10px;font-weight:400;">mg/L</small></div>';
+          html += '<div class="ts-sub">范围 ' + (s.min !== null ? s.min : '-') + ' ~ ' + (s.max !== null ? s.max : '-') + ' | ' + thresholdText;
+          if (isExceed) html += ' | <span class="exceed">⚠ 超标' + s.exceedCount + '次(' + s.exceedRate + '%)</span>';
+          else html += ' | <span class="comply">✓ 达标</span>';
+          html += '</div></div>';
+        }
+        html += '</div>';
+      } else if (type === 'water') {
+        const waterNames = { outCod: '出水COD', outNh3: '出水氨氮', outTn: '出水总氮', outTp: '出水总磷' };
+        const limits = { outCod: 50, outNh3: 5, outTn: 15, outTp: 0.5 };
+        html += '<div class="trend-stats">';
+        for (const [key, name] of Object.entries(waterNames)) {
+          if (!summary[key]) continue;
+          const s = summary[key];
+          const isExceed = s.exceedCount > 0;
+          const cls = isExceed ? 'danger' : 'success';
+          html += '<div class="trend-stat-item ' + cls + '">';
+          html += '<div class="ts-label">' + name + '（限值' + limits[key] + '）</div>';
+          html += '<div class="ts-value">' + (s.avg !== null ? s.avg : '-') + ' <small style="font-size:10px;font-weight:400;">mg/L</small></div>';
+          html += '<div class="ts-sub">范围 ' + (s.min !== null ? s.min : '-') + ' ~ ' + (s.max !== null ? s.max : '-');
+          if (isExceed) html += ' | <span class="exceed">⚠ 超标' + s.exceedCount + '次（达标率' + s.complianceRate + '%）</span>';
+          else html += ' | <span class="comply">✓ 达标率100%</span>';
+          html += '</div></div>';
+        }
+        html += '</div>';
+      } else if (type === 'sludge') {
+        html += '<div class="trend-stats">';
+        if (summary.sv30) {
+          const s = summary.sv30;
+          const isExceed = s.exceedCount > 0;
+          html += '<div class="trend-stat-item ' + (isExceed ? 'warning' : 'success') + '">';
+          html += '<div class="ts-label">SV30（正常≤30%）</div>';
+          html += '<div class="ts-value">' + (s.avg !== null ? s.avg : '-') + ' <small style="font-size:10px;font-weight:400;">%</small></div>';
+          html += '<div class="ts-sub">范围 ' + (s.min !== null ? s.min : '-') + ' ~ ' + (s.max !== null ? s.max : '-');
+          if (isExceed) html += ' | ⚠ 超标' + s.exceedCount + '次';
+          else html += ' | ✓ 正常';
+          html += '</div></div>';
+        }
+        if (summary.mlss) {
+          const s = summary.mlss;
+          const isAbnormal = s.lowCount > 0 || s.highCount > 0;
+          html += '<div class="trend-stat-item ' + (isAbnormal ? 'warning' : 'success') + '">';
+          html += '<div class="ts-label">MLSS（正常2000~4000）</div>';
+          html += '<div class="ts-value">' + (s.avg !== null ? s.avg : '-') + ' <small style="font-size:10px;font-weight:400;">mg/L</small></div>';
+          html += '<div class="ts-sub">范围 ' + (s.min !== null ? s.min : '-') + ' ~ ' + (s.max !== null ? s.max : '-');
+          if (s.lowCount > 0) html += ' | ⚠ 偏低' + s.lowCount + '次';
+          if (s.highCount > 0) html += ' | ⚠ 偏高' + s.highCount + '次';
+          if (!isAbnormal) html += ' | ✓ 正常';
+          html += '</div></div>';
+        }
+        html += '</div>';
+      } else if (type === 'chemical') {
+        const chemNames = { carbonSource: '碳源', pac: 'PAC', glucose: '葡萄糖' };
+        html += '<div class="trend-stats">';
+        for (const [key, name] of Object.entries(chemNames)) {
+          if (!summary[key]) continue;
+          const s = summary[key];
+          html += '<div class="trend-stat-item">';
+          html += '<div class="ts-label">' + name + '（日均）</div>';
+          html += '<div class="ts-value">' + (s.avg !== null ? s.avg : '-') + ' <small style="font-size:10px;font-weight:400;">kg</small></div>';
+          html += '<div class="ts-sub">范围 ' + (s.min !== null ? s.min : '-') + ' ~ ' + (s.max !== null ? s.max : '-') + ' | 波动σ=' + (s.std !== null ? s.std : '-');
+          html += '</div></div>';
+        }
+        html += '</div>';
+      }
+
+      statsDiv.innerHTML = html;
     }
 
     // ==================== 智能加药（数据驱动综合判定） ====================

@@ -689,10 +689,11 @@ app.get('/api/stats/summary', authMiddleware, (req, res) => {
 app.get('/api/trends', authMiddleware, (req, res) => {
   const range = parseInt(req.query.range) || 7;
   const type = req.query.type || 'water';
+  const seriesFilter = req.query.series || 'east'; // east | west | both
   const startDate = new Date(); startDate.setDate(startDate.getDate() - range + 1);
   const dates = []; for (let i = 0; i < range; i++) { const d = new Date(startDate); d.setDate(d.getDate() + i); dates.push(d.toISOString().slice(0, 10)); }
 
-  let series = { labels: dates.map(d => d.slice(5)), datasets: [] };
+  let result = { labels: dates.map(d => d.slice(5)), datasets: [], thresholds: [], summary: {} };
 
   if (type === 'water') {
     const data = db.prepare('SELECT * FROM hourly_water WHERE date >= ?').all(dates[0]);
@@ -708,56 +709,187 @@ app.get('/api/trends', authMiddleware, (req, res) => {
         };
       }
     });
-    series.datasets = [
-      { label: '进水COD', data: dates.map(d => dailyAvg[d]?.inCod || null), borderColor: '#3498db', tension: 0.3 },
-      { label: '出水COD', data: dates.map(d => dailyAvg[d]?.outCod || null), borderColor: '#e74c3c', tension: 0.3 },
-      { label: '进水氨氮', data: dates.map(d => dailyAvg[d]?.inNh3 || null), borderColor: '#2ecc71', tension: 0.3, hidden: true },
-      { label: '出水氨氮', data: dates.map(d => dailyAvg[d]?.outNh3 || null), borderColor: '#f39c12', tension: 0.3, hidden: true },
-      { label: '出水总氮', data: dates.map(d => dailyAvg[d]?.outTn || null), borderColor: '#9b59b6', tension: 0.3, hidden: true },
-      { label: '出水总磷', data: dates.map(d => dailyAvg[d]?.outTp || null), borderColor: '#1abc9c', tension: 0.3, hidden: true },
+    result.datasets = [
+      { label: '进水COD', data: dates.map(d => dailyAvg[d]?.inCod || null), borderColor: '#3498db', backgroundColor: 'rgba(52,152,219,0.1)', tension: 0.3, borderWidth: 2 },
+      { label: '出水COD', data: dates.map(d => dailyAvg[d]?.outCod || null), borderColor: '#e74c3c', backgroundColor: 'rgba(231,76,60,0.1)', tension: 0.3, borderWidth: 2 },
+      { label: '进水氨氮', data: dates.map(d => dailyAvg[d]?.inNh3 || null), borderColor: '#2ecc71', tension: 0.3, hidden: true, borderWidth: 2 },
+      { label: '出水氨氮', data: dates.map(d => dailyAvg[d]?.outNh3 || null), borderColor: '#f39c12', tension: 0.3, hidden: true, borderWidth: 2 },
+      { label: '进水总氮', data: dates.map(d => dailyAvg[d]?.inTn || null), borderColor: '#8e44ad', tension: 0.3, hidden: true, borderWidth: 2 },
+      { label: '出水总氮', data: dates.map(d => dailyAvg[d]?.outTn || null), borderColor: '#9b59b6', tension: 0.3, hidden: true, borderWidth: 2 },
+      { label: '进水总磷', data: dates.map(d => dailyAvg[d]?.inTp || null), borderColor: '#16a085', tension: 0.3, hidden: true, borderWidth: 2 },
+      { label: '出水总磷', data: dates.map(d => dailyAvg[d]?.outTp || null), borderColor: '#1abc9c', tension: 0.3, hidden: true, borderWidth: 2 },
     ];
+    // 天津B标准限值线
+    result.thresholds = [
+      { label: 'COD限值(50)', value: 50, color: '#e74c3c', dash: [6,4] },
+      { label: '氨氮限值(5)', value: 5, color: '#f39c12', dash: [6,4] },
+      { label: '总氮限值(15)', value: 15, color: '#9b59b6', dash: [6,4] },
+      { label: '总磷限值(0.5)', value: 0.5, color: '#1abc9c', dash: [6,4] },
+    ];
+    // 统计摘要
+    const outCodArr = dates.map(d => dailyAvg[d]?.outCod).filter(v => v != null);
+    const outNh3Arr = dates.map(d => dailyAvg[d]?.outNh3).filter(v => v != null);
+    const outTnArr = dates.map(d => dailyAvg[d]?.outTn).filter(v => v != null);
+    const outTpArr = dates.map(d => dailyAvg[d]?.outTp).filter(v => v != null);
+    result.summary = {
+      outCod: calcStats(outCodArr, 50), outNh3: calcStats(outNh3Arr, 5),
+      outTn: calcStats(outTnArr, 15), outTp: calcStats(outTpArr, 0.5),
+      dataDays: Object.keys(dailyAvg).length, totalDays: dates.length,
+    };
+
   } else if (type === 'do') {
-    const data = db.prepare("SELECT * FROM do_inspection WHERE date >= ? AND series = 'east'").all(dates[0]);
-    const doMap = {};
-    data.forEach(r => { if (!doMap[r.date]) doMap[r.date] = []; doMap[r.date].push(r); });
-    const dailyDO = {};
-    dates.forEach(d => {
-      const recs = doMap[d] || [];
-      if (recs.length > 0) {
-        dailyDO[d] = { anaerobic: avg(recs, 'anaerobic'), anoxic: avg(recs, 'anoxic'), aerobic1: avg(recs, 'aerobic1'), aerobic2: avg(recs, 'aerobic2'), aerobic3: avg(recs, 'aerobic3'), aerobic4: avg(recs, 'aerobic4') };
-      }
-    });
-    series.datasets = [
-      { label: '厌氧池DO', data: dates.map(d => dailyDO[d]?.anaerobic || null), borderColor: '#e74c3c', tension: 0.3 },
-      { label: '缺氧池DO', data: dates.map(d => dailyDO[d]?.anoxic || null), borderColor: '#3498db', tension: 0.3 },
-      { label: '好氧池1 DO', data: dates.map(d => dailyDO[d]?.aerobic1 || null), borderColor: '#2ecc71', tension: 0.3 },
-      { label: '好氧池2 DO', data: dates.map(d => dailyDO[d]?.aerobic2 || null), borderColor: '#f39c12', tension: 0.3 },
-      { label: '好氧池3 DO', data: dates.map(d => dailyDO[d]?.aerobic3 || null), borderColor: '#9b59b6', tension: 0.3 },
-      { label: '好氧池4 DO', data: dates.map(d => dailyDO[d]?.aerobic4 || null), borderColor: '#1abc9c', tension: 0.3 },
+    // 查询东系列和西系列数据
+    const eastData = db.prepare("SELECT * FROM do_inspection WHERE date >= ? AND series = 'east'").all(dates[0]);
+    const westData = db.prepare("SELECT * FROM do_inspection WHERE date >= ? AND series = 'west'").all(dates[0]);
+
+    const buildDailyDO = (records) => {
+      const doMap = {};
+      records.forEach(r => { if (!doMap[r.date]) doMap[r.date] = []; doMap[r.date].push(r); });
+      const daily = {};
+      dates.forEach(d => {
+        const recs = doMap[d] || [];
+        if (recs.length > 0) {
+          daily[d] = {
+            anaerobic: avg(recs, 'anaerobic'), anoxic: avg(recs, 'anoxic'),
+            aerobic1: avg(recs, 'aerobic1'), aerobic2: avg(recs, 'aerobic2'),
+            aerobic3: avg(recs, 'aerobic3'), aerobic4: avg(recs, 'aerobic4'),
+          };
+        }
+      });
+      return daily;
+    };
+
+    const eastDaily = buildDailyDO(eastData);
+    const westDaily = buildDailyDO(westData);
+
+    const pools = ['anaerobic', 'anoxic', 'aerobic1', 'aerobic2', 'aerobic3', 'aerobic4'];
+    const poolNames = { anaerobic: '厌氧池', anoxic: '缺氧池', aerobic1: '好氧池1', aerobic2: '好氧池2', aerobic3: '好氧池3', aerobic4: '好氧池4' };
+    const poolColors = { anaerobic: '#e74c3c', anoxic: '#3498db', aerobic1: '#2ecc71', aerobic2: '#f39c12', aerobic3: '#9b59b6', aerobic4: '#1abc9c' };
+    // 西系列用虚线+透明度区分
+    const poolColorsWest = { anaerobic: '#c0392b', anoxic: '#2980b9', aerobic1: '#27ae60', aerobic2: '#e67e22', aerobic3: '#8e44ad', aerobic4: '#16a085' };
+
+    const datasets = [];
+    // 东系列
+    if (seriesFilter === 'east' || seriesFilter === 'both') {
+      pools.forEach(p => {
+        datasets.push({
+          label: '东·' + poolNames[p], data: dates.map(d => eastDaily[d]?.[p] || null),
+          borderColor: poolColors[p], tension: 0.3, borderWidth: 2,
+          pointRadius: 3, pointHoverRadius: 5,
+        });
+      });
+    }
+    // 西系列
+    if (seriesFilter === 'west' || seriesFilter === 'both') {
+      pools.forEach(p => {
+        datasets.push({
+          label: '西·' + poolNames[p], data: dates.map(d => westDaily[d]?.[p] || null),
+          borderColor: poolColorsWest[p], tension: 0.3, borderWidth: 2, borderDash: [6, 3],
+          pointRadius: 3, pointHoverRadius: 5, pointStyle: 'rectRot',
+        });
+      });
+    }
+    result.datasets = datasets;
+
+    // DO预警阈值线
+    result.thresholds = [
+      { label: '厌氧上限(0.2)', value: 0.2, color: '#e74c3c', dash: [4,4] },
+      { label: '缺氧上限(0.5)', value: 0.5, color: '#3498db', dash: [4,4] },
+      { label: '好氧下限(1.5)', value: 1.5, color: '#2ecc71', dash: [4,4] },
+      { label: '好氧上限(3.5)', value: 3.5, color: '#f39c12', dash: [4,4] },
     ];
+
+    // DO统计摘要 — 基于东系列
+    const summary = {};
+    const targetDaily = seriesFilter === 'west' ? westDaily : eastDaily;
+    pools.forEach(p => {
+      const arr = dates.map(d => targetDaily[d]?.[p]).filter(v => v != null);
+      const thresholds = { anaerobic: 0.2, anoxic: 0.5, aerobic1: 1.5, aerobic2: 1.5, aerobic3: 1.5, aerobic4: 1.5 };
+      const upperLimits = { anaerobic: null, anoxic: null, aerobic1: 3.5, aerobic2: 3.5, aerobic3: 3.5, aerobic4: 3.5 };
+      let exceedCount = 0;
+      if (p.startsWith('aerobic')) {
+        exceedCount = arr.filter(v => v < thresholds[p] || v > upperLimits[p]).length;
+      } else {
+        exceedCount = arr.filter(v => v > thresholds[p]).length;
+      }
+      summary[p] = {
+        ...calcStats(arr),
+        exceedCount, exceedRate: arr.length > 0 ? Math.round(exceedCount / arr.length * 100) : 0,
+        threshold: thresholds[p], upperLimit: upperLimits[p],
+      };
+    });
+    result.summary = summary;
+    result.summary.dataDays = Object.keys(targetDaily).length;
+    result.summary.totalDays = dates.length;
+    result.summary.series = seriesFilter;
+
   } else if (type === 'sludge') {
     const data = db.prepare('SELECT * FROM daily_lab WHERE date >= ?').all(dates[0]);
     const svMap = {}, mlssMap = {};
     data.forEach(r => { svMap[r.date] = Number(r.sv30) || null; mlssMap[r.date] = Number(r.mlss) || null; });
-    series.datasets = [
-      { label: 'SV30(%)', data: dates.map(d => svMap[d] || null), borderColor: '#e74c3c', tension: 0.3, yAxisID: 'y' },
-      { label: 'MLSS(mg/L)', data: dates.map(d => mlssMap[d] || null), borderColor: '#3498db', tension: 0.3, yAxisID: 'y1' },
+    result.datasets = [
+      { label: 'SV30(%)', data: dates.map(d => svMap[d] || null), borderColor: '#e74c3c', backgroundColor: 'rgba(231,76,60,0.1)', tension: 0.3, yAxisID: 'y', borderWidth: 2, fill: true },
+      { label: 'MLSS(mg/L)', data: dates.map(d => mlssMap[d] || null), borderColor: '#3498db', backgroundColor: 'rgba(52,152,219,0.1)', tension: 0.3, yAxisID: 'y1', borderWidth: 2, fill: true },
     ];
+    // SV30和MLSS正常范围
+    result.thresholds = [
+      { label: 'SV30上限(30%)', value: 30, color: '#e74c3c', dash: [6,4], yAxisID: 'y' },
+      { label: 'MLSS下限(2000)', value: 2000, color: '#3498db', dash: [6,4], yAxisID: 'y1' },
+      { label: 'MLSS上限(4000)', value: 4000, color: '#3498db', dash: [6,4], yAxisID: 'y1' },
+    ];
+    const svArr = dates.map(d => svMap[d]).filter(v => v != null);
+    const mlssArr = dates.map(d => mlssMap[d]).filter(v => v != null);
+    result.summary = {
+      sv30: { ...calcStats(svArr), exceedCount: svArr.filter(v => v > 30).length },
+      mlss: { ...calcStats(mlssArr), lowCount: mlssArr.filter(v => v < 2000).length, highCount: mlssArr.filter(v => v > 4000).length },
+      dataDays: data.length, totalDays: dates.length,
+    };
+
   } else if (type === 'chemical') {
     const data = db.prepare('SELECT * FROM chemical_dosing WHERE date >= ?').all(dates[0]);
     const chemMap = {};
     data.forEach(r => { if (!chemMap[r.date]) chemMap[r.date] = []; chemMap[r.date].push(r); });
     const dailyChem = {};
     dates.forEach(d => { const recs = chemMap[d] || []; if (recs.length > 0) { dailyChem[d] = { carbonSource: avg(recs, 'carbonSource'), glucose: avg(recs, 'glucose'), pac: avg(recs, 'pac'), anionPam: avg(recs, 'anionPam'), cationPam: avg(recs, 'cationPam'), naclo: avg(recs, 'naclo') }; } });
-    series.datasets = [
-      { label: '碳源(kg)', data: dates.map(d => dailyChem[d]?.carbonSource || null), borderColor: '#e74c3c', tension: 0.3 },
-      { label: 'PAC(kg)', data: dates.map(d => dailyChem[d]?.pac || null), borderColor: '#3498db', tension: 0.3 },
-      { label: '葡萄糖(kg)', data: dates.map(d => dailyChem[d]?.glucose || null), borderColor: '#2ecc71', tension: 0.3, hidden: true },
-      { label: '次氯酸钠(kg)', data: dates.map(d => dailyChem[d]?.naclo || null), borderColor: '#9b59b6', tension: 0.3, hidden: true },
+    result.datasets = [
+      { label: '碳源(kg)', data: dates.map(d => dailyChem[d]?.carbonSource || null), borderColor: '#e74c3c', backgroundColor: 'rgba(231,76,60,0.15)', tension: 0.3, borderWidth: 2, fill: true },
+      { label: 'PAC(kg)', data: dates.map(d => dailyChem[d]?.pac || null), borderColor: '#3498db', backgroundColor: 'rgba(52,152,219,0.15)', tension: 0.3, borderWidth: 2, fill: true },
+      { label: '葡萄糖(kg)', data: dates.map(d => dailyChem[d]?.glucose || null), borderColor: '#2ecc71', tension: 0.3, hidden: true, borderWidth: 2 },
+      { label: '次氯酸钠(kg)', data: dates.map(d => dailyChem[d]?.naclo || null), borderColor: '#9b59b6', tension: 0.3, hidden: true, borderWidth: 2 },
+      { label: '阴离子PAM(kg)', data: dates.map(d => dailyChem[d]?.anionPam || null), borderColor: '#f39c12', tension: 0.3, hidden: true, borderWidth: 2 },
+      { label: '阳离子PAM(kg)', data: dates.map(d => dailyChem[d]?.cationPam || null), borderColor: '#1abc9c', tension: 0.3, hidden: true, borderWidth: 2 },
     ];
+    const csArr = dates.map(d => dailyChem[d]?.carbonSource).filter(v => v != null);
+    const pacArr = dates.map(d => dailyChem[d]?.pac).filter(v => v != null);
+    const glucArr = dates.map(d => dailyChem[d]?.glucose).filter(v => v != null);
+    result.summary = {
+      carbonSource: calcStats(csArr), pac: calcStats(pacArr), glucose: calcStats(glucArr),
+      dataDays: Object.keys(dailyChem).length, totalDays: dates.length,
+    };
   }
-  res.json(series);
+  res.json(result);
 });
+
+// 统计计算辅助函数：均值、最大、最小、标准差
+function calcStats(arr, limit) {
+  if (!arr || arr.length === 0) return { avg: null, min: null, max: null, std: null, count: 0 };
+  const sum = arr.reduce((a, b) => a + b, 0);
+  const mean = sum / arr.length;
+  const std = Math.sqrt(arr.reduce((s, v) => s + (v - mean) ** 2, 0) / arr.length);
+  const stats = {
+    avg: Math.round(mean * 100) / 100,
+    min: Math.round(Math.min(...arr) * 100) / 100,
+    max: Math.round(Math.max(...arr) * 100) / 100,
+    std: Math.round(std * 100) / 100,
+    count: arr.length,
+  };
+  if (limit != null) {
+    stats.exceedCount = arr.filter(v => v > limit).length;
+    stats.exceedRate = Math.round(stats.exceedCount / arr.length * 100);
+    stats.complianceRate = 100 - stats.exceedRate;
+  }
+  return stats;
+}
 
 function avg(arr, key) {
   const vals = arr.map(r => Number(r[key])).filter(v => !isNaN(v));
