@@ -1,0 +1,114 @@
+sequenceDiagram
+    participant App as server.js
+    participant DB as db.js
+    participant SQLite as better-sqlite3
+    participant JSON as sewage_data.json
+
+    App->>DB: initDatabase()
+    DB->>SQLite: new Database(DATABASE_PATH)
+    SQLite-->>DB: db 实例
+    DB->>SQLite: PRAGMA journal_mode=WAL
+    DB->>SQLite: PRAGMA foreign_keys=ON
+    
+    DB->>SQLite: CREATE TABLE IF NOT EXISTS schema_version...
+    DB->>SQLite: SELECT version FROM schema_version
+    
+    alt 数据库为空（首次启动）
+        DB->>SQLite: 执行全部 CREATE TABLE + CREATE INDEX
+        DB->>SQLite: INSERT schema_version(1, now, 'init')
+        
+        alt 存在 sewage_data.json
+            DB->>JSON: fs.readFileSync('sewage_data.json')
+            JSON-->>DB: JSON 数据
+            DB->>SQLite: 事务批量 INSERT 各表数据
+            DB->>App: { migrated: true, counts: {...} }
+        else 无 JSON 文件
+            DB->>SQLite: INSERT 22 个预置用户
+            DB->>App: { migrated: false, seeded: true }
+        end
+    else 数据库已有数据
+        DB->>SQLite: 检查 schema_version
+        alt version < LATEST
+            DB->>SQLite: 执行增量 ALTER TABLE / CREATE INDEX
+            DB->>SQLite: UPDATE schema_version
+        end
+        DB->>App: { migrated: false, upgraded: true/false }
+    end
+    
+    App->>App: 加载路由、启动 Express 监听
+
+    %% 日常请求流程
+    Note over App,SQLite: === 日常请求处理 ===
+    
+    participant Client as 浏览器
+    participant Express as Express
+    participant Auth as middleware.js
+    participant Route as routes.js
+    
+    Client->>Express: GET /api/daily_lab?page=1&limit=20&dateFrom=2024-01-01&dateTo=2026-01-01
+    Express->>Auth: authMiddleware(req, res, next)
+    Auth->>Auth: 验证 Bearer token → sessions Map
+    Auth-->>Express: req.user = { id, name, role, groupId }
+    Express->>Route: 路由匹配 GET /api/daily_lab
+    Route->>DB: paginate('daily_lab', { dateFrom, dateTo, page, limit, user })
+    DB->>SQLite: SELECT * FROM daily_lab WHERE date >= ? AND date <= ? LIMIT ? OFFSET ?
+    SQLite-->>DB: rows[]
+    DB-->>Route: { data: rows, total, page, limit, totalPages }
+    Route-->>Client: JSON Response
+
+    %% Railway 部署流程
+    Note over App,SQLite: === Railway 部署 ===
+    
+    participant Dev as 开发者
+    participant Git as GitHub
+    participant RW as Railway
+    participant Vol as Volume
+
+    Dev->>Git: git push（含 railway.toml）
+    Git->>RW: Webhook 触发部署
+    RW->>RW: Nixpacks 检测 Node.js 项目
+    RW->>RW: npm install（含 better-sqlite3 编译）
+    RW->>RW: npm start → node server.js
+    RW->>Vol: 挂载 Volume 到 /data
+    RW->>RW: server.js 启动 → initDatabase()
+    Note over RW,Vol: DATABASE_PATH=/data/sewage.db
+    RW->>RW: 自动建表 + 迁移（如需要）
+    RW-->>Dev: 服务就绪 ✅
+
+    %% 导出2年数据流程
+    Note over Client,SQLite: === Excel 导出 2 年数据 ===
+    
+    Client->>Express: GET /api/export/daily_lab?dateFrom=2024-06-01&dateTo=2026-06-01
+    Express->>Auth: authMiddleware
+    Auth-->>Express: req.user
+    Express->>Route: exportRoute
+    Route->>DB: query('SELECT * FROM daily_lab WHERE date >= ? AND date <= ?', [dateFrom, dateTo])
+    DB->>SQLite: 参数化查询
+    SQLite-->>DB: rows[]
+    DB-->>Route: rows
+    Route->>Route: exceljs 生成 xlsx
+    Route->>DB: insert('exportLog', {...})
+    Route-->>Client: xlsx 文件下载
+
+    %% 用户管理流程
+    Note over Client,SQLite: === 用户管理 ===
+    
+    Client->>Express: POST /api/users (新增用户)
+    Express->>Auth: authMiddleware + requireRole(canManage)
+    Auth-->>Express: 权限验证通过
+    Express->>Route: createUser route
+    Route->>DB: insert('users', { id, username, password, name, role, ... })
+    DB->>SQLite: INSERT INTO users
+    SQLite-->>DB: { changes: 1 }
+    DB-->>Route: success
+    Route-->>Client: { success: true, id: 'u23' }
+
+    Client->>Express: POST /api/users/:id/reset-password
+    Express->>Auth: authMiddleware + requireRole(canManage)
+    Auth-->>Express: 权限验证通过
+    Express->>Route: resetPassword route
+    Route->>DB: run('UPDATE users SET password = ? WHERE id = ?', [newPassword, id])
+    DB->>SQLite: UPDATE users
+    SQLite-->>DB: { changes: 1 }
+    DB-->>Route: success
+    Route-->>Client: { success: true }

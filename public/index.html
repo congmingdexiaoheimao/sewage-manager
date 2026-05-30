@@ -505,8 +505,12 @@
 
     async function exportTable(table) {
       try {
-        window.open(API + '/api/export/' + table + '?token=' + localStorage.getItem('sb_token'), '_blank');
-        toast('导出已开始');
+        const from = document.getElementById('exportFrom')?.value;
+        const to = document.getElementById('exportTo')?.value;
+        let url = API + '/api/export/' + table + '?token=' + localStorage.getItem('sb_token');
+        if (from && to) url += '&dateFrom=' + from + '&dateTo=' + to;
+        window.open(url, '_blank');
+        toast('导出已开始（' + (from || '全部') + ' ~ ' + (to || '全部') + '）');
       } catch (e) { toast('导出失败', 'error'); }
     }
 
@@ -892,6 +896,23 @@
 
     function openExport() {
       let html = '<div class="modal-header"><h3>📤 数据导出</h3><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body">';
+      // 日期范围选择
+      html += '<div style="background:#f6f8fa;border-radius:8px;padding:12px;margin-bottom:16px;">';
+      html += '<div style="font-size:13px;font-weight:600;margin-bottom:8px;">📅 选择日期范围</div>';
+      html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+      html += '<input type="date" id="exportFrom" style="padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;">';
+      html += '<span style="color:#999;">至</span>';
+      html += '<input type="date" id="exportTo" style="padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;">';
+      html += '</div>';
+      html += '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">';
+      html += '<button class="btn btn-outline" style="font-size:12px;padding:3px 10px;" onclick="setExportRange(7)">近7天</button>';
+      html += '<button class="btn btn-outline" style="font-size:12px;padding:3px 10px;" onclick="setExportRange(30)">近30天</button>';
+      html += '<button class="btn btn-outline" style="font-size:12px;padding:3px 10px;" onclick="setExportRange(90)">近3月</button>';
+      html += '<button class="btn btn-outline" style="font-size:12px;padding:3px 10px;" onclick="setExportRange(365)">近1年</button>';
+      html += '<button class="btn btn-primary" style="font-size:12px;padding:3px 10px;" onclick="setExportRange(730)">近2年</button>';
+      html += '<button class="btn btn-outline" style="font-size:12px;padding:3px 10px;" onclick="setExportRange(0)">全部数据</button>';
+      html += '</div></div>';
+      // 数据类型选择
       html += '<p style="font-size:13px;color:#666;margin-bottom:12px;">选择要导出的数据类型：</p><div class="export-types">';
       [
         { key: 'do_inspection', name: 'DO巡检', icon: '🔍' },
@@ -908,6 +929,15 @@
       });
       html += '</div></div><div class="modal-footer"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
       openModal(html);
+      // 默认选中近2年
+      setTimeout(() => setExportRange(730), 100);
+    }
+
+    function setExportRange(days) {
+      const to = new Date();
+      const from = days > 0 ? new Date(Date.now() - days * 86400000) : new Date('2020-01-01');
+      document.getElementById('exportFrom').value = from.toISOString().slice(0, 10);
+      document.getElementById('exportTo').value = to.toISOString().slice(0, 10);
     }
 
     // ==================== 污泥综合分析 (SV30/MLSS/SVI/镜检) ====================
@@ -1086,10 +1116,170 @@
       html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;"><div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#1890ff,#096dd9);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;">' + (currentUser.name || '?')[0] + '</div><div><div style="font-size:16px;font-weight:600;">' + currentUser.name + '</div><div style="font-size:12px;color:#8c8c8c;">' + currentUser.role + (currentUser.groupId ? ' · ' + currentUser.groupId : '') + '</div></div></div>';
       html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center;"><div><div style="font-size:20px;font-weight:700;">' + (currentUser.phone || '-') + '</div><div style="font-size:11px;color:#8c8c8c;">手机号</div></div><div><div style="font-size:20px;font-weight:700;">' + currentUser.username + '</div><div style="font-size:11px;color:#8c8c8c;">用户名</div></div><div><div style="font-size:20px;font-weight:700;color:' + (currentPermissions.canManage ? '#52c41a' : '#8c8c8c') + ';">' + (currentPermissions.canManage ? '是' : '否') + '</div><div style="font-size:11px;color:#8c8c8c;">管理权限</div></div></div>';
       html += '</div></div>';
-      html += '<div class="card mt-12"><div class="card-body" style="padding:0;"><div class="inv-item" onclick="switchTab(\'fill\')"><span>📝 数据填报</span><span style="color:#8c8c8c;">→</span></div><div class="inv-item" onclick="switchTab(\'data\')"><span>📊 数据查询</span><span style="color:#8c8c8c;">→</span></div><div class="inv-item" onclick="switchTab(\'tools\')"><span>⚙️ 智能工具</span><span style="color:#8c8c8c;">→</span></div></div></div>';
+      html += '<div class="card mt-12"><div class="card-body" style="padding:0;"><div class="inv-item" onclick="switchTab(\'fill\')"><span>📝 数据填报</span><span style="color:#8c8c8c;">→</span></div><div class="inv-item" onclick="switchTab(\'data\')"><span>📊 数据查询</span><span style="color:#8c8c8c;">→</span></div><div class="inv-item" onclick="switchTab(\'tools\')"><span>⚙️ 智能工具</span><span style="color:#8c8c8c;">→</span></div>';
+      // 用户管理入口（厂长/副厂长可见）
+      if (currentPermissions.canManage) {
+        html += '<div class="inv-item" onclick="openUserManager()" style="background:linear-gradient(90deg,#f0f5ff,#e6f7ff);"><span style="color:#1890ff;font-weight:600;">👥 用户管理</span><span style="color:#1890ff;">→</span></div>';
+      }
+      html += '</div></div>';
       html += '<div class="card mt-12"><div class="card-body" style="padding:0;"><div class="inv-item" onclick="doLogout()"><span style="color:#f5222d;">🚪 退出登录</span><span style="color:#f5222d;">→</span></div></div></div>';
-      html += '<div style="text-align:center;margin-top:24px;font-size:11px;color:#bfbfbf;">污水处理厂运行管理系统 v3.0<br>智慧水务 · 精准管控</div>';
+      html += '<div style="text-align:center;margin-top:24px;font-size:11px;color:#bfbfbf;">污水处理厂运行管理系统 v4.0 (SQLite)<br>智慧水务 · 精准管控</div>';
       page.innerHTML = html;
+    }
+
+    // ==================== 用户管理 ====================
+    async function openUserManager() {
+      let html = '<div class="modal-header"><h3>👥 用户管理</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+      html += '<div class="modal-body"><div class="loading" id="userMgmtLoading">加载中...</div><div id="userMgmtContent"></div></div>';
+      html += '<div class="modal-footer"><button class="btn btn-primary" onclick="showAddUserForm()">➕ 新增用户</button><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+      openModal(html);
+      await loadUserList();
+    }
+
+    async function loadUserList() {
+      try {
+        const res = await fetch(API + '/api/users', { headers: authHeaders() });
+        const result = await res.json();
+        const users = result.data || result;
+        let html = '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
+        html += '<thead><tr style="background:#f0f5ff;"><th style="padding:8px;text-align:left;">姓名</th><th style="padding:8px;text-align:left;">用户名</th><th style="padding:8px;text-align:left;">角色</th><th style="padding:8px;text-align:left;">班组</th><th style="padding:8px;text-align:center;">状态</th><th style="padding:8px;text-align:center;">操作</th></tr></thead><tbody>';
+        users.forEach(u => {
+          const statusHtml = u.status === 'active' ? '<span style="color:#52c41a;">✅启用</span>' : '<span style="color:#ff4d4f;">❌禁用</span>';
+          html += '<tr style="border-bottom:1px solid #f0f0f0;">';
+          html += '<td style="padding:8px;">' + (u.name || '-') + '</td>';
+          html += '<td style="padding:8px;color:#1890ff;">' + (u.username || '-') + '</td>';
+          html += '<td style="padding:8px;">' + (u.role || '-') + '</td>';
+          html += '<td style="padding:8px;">' + (u.groupId || '-') + '</td>';
+          html += '<td style="padding:8px;text-align:center;">' + statusHtml + '</td>';
+          html += '<td style="padding:8px;text-align:center;"><button class="btn btn-outline" style="font-size:11px;padding:2px 8px;margin-right:4px;" onclick="editUser(\'' + u.id + '\',\'' + (u.name || '').replace(/'/g, "\\'") + '\',\'' + (u.username || '') + '\',\'' + (u.role || '') + '\',\'' + (u.phone || '') + '\',\'' + (u.groupId || '') + '\',\'' + (u.status || '') + '\')">编辑</button>';
+          if (u.status === 'active') {
+            html += '<button class="btn btn-outline" style="font-size:11px;padding:2px 8px;color:#ff4d4f;border-color:#ff4d4f;" onclick="toggleUserStatus(\'' + u.id + '\',\'inactive\')">禁用</button>';
+          } else {
+            html += '<button class="btn btn-outline" style="font-size:11px;padding:2px 8px;color:#52c41a;border-color:#52c41a;" onclick="toggleUserStatus(\'' + u.id + '\',\'active\')">启用</button>';
+          }
+          html += '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+        const container = document.getElementById('userMgmtContent');
+        if (container) container.innerHTML = html;
+        const loading = document.getElementById('userMgmtLoading');
+        if (loading) loading.style.display = 'none';
+      } catch (e) {
+        toast('加载用户列表失败', 'error');
+      }
+    }
+
+    function showAddUserForm() {
+      let html = '<div style="background:#f6f8fa;border-radius:8px;padding:16px;margin-bottom:12px;">';
+      html += '<div style="font-size:14px;font-weight:600;margin-bottom:12px;">➕ 新增用户</div>';
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">';
+      html += '<div><label style="font-size:12px;color:#666;">用户名 *</label><input type="text" id="newUsername" style="width:100%;padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;" placeholder="登录用户名"></div>';
+      html += '<div><label style="font-size:12px;color:#666;">姓名 *</label><input type="text" id="newName" style="width:100%;padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;" placeholder="真实姓名"></div>';
+      html += '<div><label style="font-size:12px;color:#666;">密码 *</label><input type="password" id="newPassword" style="width:100%;padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;" placeholder="登录密码"></div>';
+      html += '<div><label style="font-size:12px;color:#666;">角色 *</label><select id="newRole" style="width:100%;padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;"><option value="运营班组">运营班组</option><option value="化验员">化验员</option><option value="化验主管">化验主管</option><option value="文员">文员</option><option value="运营管理部">运营管理部</option><option value="技术管理部">技术管理部</option><option value="副厂长">副厂长</option><option value="厂长">厂长</option></select></div>';
+      html += '<div><label style="font-size:12px;color:#666;">手机号</label><input type="text" id="newPhone" style="width:100%;padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;" placeholder="手机号"></div>';
+      html += '<div><label style="font-size:12px;color:#666;">班组</label><select id="newGroupId" style="width:100%;padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;"><option value="">无</option><option value="group1">班组1</option><option value="group2">班组2</option><option value="group3">班组3</option><option value="group4">班组4</option></select></div>';
+      html += '</div>';
+      html += '<div style="margin-top:12px;text-align:right;"><button class="btn btn-primary" onclick="doAddUser()">确认新增</button> <button class="btn btn-outline" onclick="loadUserList()">取消</button></div>';
+      html += '</div>';
+      const container = document.getElementById('userMgmtContent');
+      if (container) container.innerHTML = html + container.innerHTML.replace(/<div style="overflow-x:auto;">[\s\S]*$/,'');
+      // Rebuild: replace content but keep add form
+      const fullContainer = document.getElementById('userMgmtContent');
+      if (fullContainer) fullContainer.innerHTML = html + '<div id="userListArea"></div>';
+      // Reload user list into userListArea
+      fetch(API + '/api/users', { headers: authHeaders() }).then(r => r.json()).then(result => {
+        const users = result.data || result;
+        let listHtml = '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
+        listHtml += '<thead><tr style="background:#f0f5ff;"><th style="padding:8px;text-align:left;">姓名</th><th style="padding:8px;text-align:left;">用户名</th><th style="padding:8px;text-align:left;">角色</th><th style="padding:8px;text-align:left;">班组</th><th style="padding:8px;text-align:center;">状态</th><th style="padding:8px;text-align:center;">操作</th></tr></thead><tbody>';
+        users.forEach(u => {
+          const statusHtml = u.status === 'active' ? '<span style="color:#52c41a;">✅启用</span>' : '<span style="color:#ff4d4f;">❌禁用</span>';
+          listHtml += '<tr style="border-bottom:1px solid #f0f0f0;">';
+          listHtml += '<td style="padding:8px;">' + (u.name || '-') + '</td>';
+          listHtml += '<td style="padding:8px;color:#1890ff;">' + (u.username || '-') + '</td>';
+          listHtml += '<td style="padding:8px;">' + (u.role || '-') + '</td>';
+          listHtml += '<td style="padding:8px;">' + (u.groupId || '-') + '</td>';
+          listHtml += '<td style="padding:8px;text-align:center;">' + statusHtml + '</td>';
+          listHtml += '<td style="padding:8px;text-align:center;"><button class="btn btn-outline" style="font-size:11px;padding:2px 8px;margin-right:4px;" onclick="editUser(\'' + u.id + '\',\'' + (u.name || '').replace(/'/g, "\\'") + '\',\'' + (u.username || '') + '\',\'' + (u.role || '') + '\',\'' + (u.phone || '') + '\',\'' + (u.groupId || '') + '\',\'' + (u.status || '') + '\')">编辑</button>';
+          if (u.status === 'active') {
+            listHtml += '<button class="btn btn-outline" style="font-size:11px;padding:2px 8px;color:#ff4d4f;border-color:#ff4d4f;" onclick="toggleUserStatus(\'' + u.id + '\',\'inactive\')">禁用</button>';
+          } else {
+            listHtml += '<button class="btn btn-outline" style="font-size:11px;padding:2px 8px;color:#52c41a;border-color:#52c41a;" onclick="toggleUserStatus(\'' + u.id + '\',\'active\')">启用</button>';
+          }
+          listHtml += '</td></tr>';
+        });
+        listHtml += '</tbody></table></div>';
+        const listArea = document.getElementById('userListArea');
+        if (listArea) listArea.innerHTML = listHtml;
+      });
+    }
+
+    async function doAddUser() {
+      const username = document.getElementById('newUsername')?.value?.trim();
+      const name = document.getElementById('newName')?.value?.trim();
+      const password = document.getElementById('newPassword')?.value;
+      const role = document.getElementById('newRole')?.value;
+      const phone = document.getElementById('newPhone')?.value?.trim();
+      const groupId = document.getElementById('newGroupId')?.value;
+      if (!username || !name || !password || !role) { toast('请填写必填字段', 'error'); return; }
+      try {
+        const res = await fetch(API + '/api/users', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ username, name, password, role, phone, groupId }) });
+        const data = await res.json();
+        if (res.ok) { toast('用户创建成功'); loadUserList(); }
+        else { toast(data.error || '创建失败', 'error'); }
+      } catch (e) { toast('创建失败', 'error'); }
+    }
+
+    function editUser(id, name, username, role, phone, groupId, status) {
+      let html = '<div style="background:#fff7e6;border-radius:8px;padding:16px;margin-bottom:12px;">';
+      html += '<div style="font-size:14px;font-weight:600;margin-bottom:12px;">✏️ 编辑用户: ' + name + '</div>';
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">';
+      html += '<div><label style="font-size:12px;color:#666;">姓名</label><input type="text" id="editName" value="' + name + '" style="width:100%;padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;"></div>';
+      html += '<div><label style="font-size:12px;color:#666;">角色</label><select id="editRole" style="width:100%;padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;">';
+      ['运营班组','化验员','化验主管','文员','运营管理部','技术管理部','副厂长','厂长'].forEach(r => {
+        html += '<option value="' + r + '"' + (r === role ? ' selected' : '') + '>' + r + '</option>';
+      });
+      html += '</select></div>';
+      html += '<div><label style="font-size:12px;color:#666;">手机号</label><input type="text" id="editPhone" value="' + phone + '" style="width:100%;padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;"></div>';
+      html += '<div><label style="font-size:12px;color:#666;">班组</label><select id="editGroupId" style="width:100%;padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;">';
+      ['', 'group1', 'group2', 'group3', 'group4'].forEach(g => {
+        const label = g ? '班组' + g.replace('group', '') : '无';
+        html += '<option value="' + g + '"' + (g === groupId ? ' selected' : '') + '>' + label + '</option>';
+      });
+      html += '</select></div>';
+      html += '<div><label style="font-size:12px;color:#666;">新密码（留空不修改）</label><input type="password" id="editPassword" style="width:100%;padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;" placeholder="不修改则留空"></div>';
+      html += '</div>';
+      html += '<div style="margin-top:12px;text-align:right;"><button class="btn btn-primary" onclick="doEditUser(\'' + id + '\')">保存修改</button> <button class="btn btn-outline" onclick="loadUserList()">取消</button></div>';
+      html += '</div>';
+      const container = document.getElementById('userMgmtContent');
+      if (container) container.innerHTML = html + '<div id="userListArea"></div>';
+    }
+
+    async function doEditUser(id) {
+      const name = document.getElementById('editName')?.value?.trim();
+      const role = document.getElementById('editRole')?.value;
+      const phone = document.getElementById('editPhone')?.value?.trim();
+      const groupId = document.getElementById('editGroupId')?.value;
+      const password = document.getElementById('editPassword')?.value;
+      const body = { name, role, phone, groupId };
+      if (password) body.password = password;
+      try {
+        const res = await fetch(API + '/api/users/' + id, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) });
+        const data = await res.json();
+        if (res.ok) { toast('用户信息已更新'); loadUserList(); }
+        else { toast(data.error || '更新失败', 'error'); }
+      } catch (e) { toast('更新失败', 'error'); }
+    }
+
+    async function toggleUserStatus(id, newStatus) {
+      const action = newStatus === 'active' ? '启用' : '禁用';
+      if (!confirm('确认' + action + '该用户？')) return;
+      try {
+        const res = await fetch(API + '/api/users/' + id, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ status: newStatus }) });
+        const data = await res.json();
+        if (res.ok) { toast('用户已' + action); loadUserList(); }
+        else { toast(data.error || '操作失败', 'error'); }
+      } catch (e) { toast('操作失败', 'error'); }
     }
 
     function doLogout() {

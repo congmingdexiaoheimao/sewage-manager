@@ -4,3 +4,7 @@ npm-debug.log*
 sewage_data.json
 .env
 .DS_Store
+*.db
+*.db-wal
+*.db-shm
+sewage_data.db

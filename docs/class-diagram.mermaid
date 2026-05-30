@@ -1,0 +1,90 @@
+classDiagram
+    class Server {
+        +Express app
+        +number PORT
+        +constructor()
+        +start() void
+    }
+
+    class Database {
+        -Database _db
+        -string DB_PATH
+        +getDB() Database
+        +initDatabase() object
+        +query(sql, params) row[]
+        +queryOne(sql, params) row
+        +run(sql, params) object
+        +insert(table, obj) object
+        +update(table, obj, where, params) object
+        +count(table, where, params) number
+        +paginate(table, options) object
+        +transaction(fn) result
+        -migrateFromJSON(db, jsonData, result) void
+        -seedDefaultUsers(db) void
+        -createTables(db) void
+        -createIndexes(db) void
+    }
+
+    class Middleware {
+        +Map sessions
+        +object ROLES
+        +object CHINESE_FIELDS
+        +authMiddleware(req, res, next) void
+        +requireRole(...roles) function
+        +getAccessibleTables(role) string[]
+    }
+
+    class Routes {
+        +registerRoutes(app, db, middleware) void
+        -crudRoutes(app, table, db, middleware) void
+        -authRoutes(app, db, middleware) void
+        -alertRoutes(app, db, middleware) void
+        -analysisRoutes(app, db, middleware) void
+        -exportRoutes(app, db, middleware) void
+        -userManagementRoutes(app, db, middleware) void
+        -streamAndStatsRoutes(app, db, middleware) void
+    }
+
+    class Seed {
+        +generateSeedData(db, user) object
+        -generateInspectionData() object[]
+        -generateHourlyWaterData() object[]
+        -generateDailyLabData() object[]
+        -generateDosingData() object[]
+        -generateInventoryData() object[]
+        -generateAlertData() object[]
+        -generateTaskData() object[]
+    }
+
+    class Express {
+        +use(middleware) void
+        +get(path, handler) void
+        +post(path, handler) void
+        +put(path, handler) void
+        +delete(path, handler) void
+        +listen(port, callback) void
+        +static(root) middleware
+    }
+
+    class BetterSqlite3 {
+        +pragma(setting) void
+        +prepare(sql) Statement
+        +exec(sql) void
+        +transaction(fn) Transaction
+    }
+
+    class Statement {
+        +run(...params) object
+        +get(...params) row
+        +all(...params) row[]
+    }
+
+    Server --> Express : creates
+    Server --> Database : initializes
+    Server --> Middleware : uses
+    Server --> Routes : registers
+    Routes --> Database : queries via
+    Routes --> Middleware : checks auth via
+    Seed --> Database : inserts via
+    Database --> BetterSqlite3 : wraps
+    BetterSqlite3 --> Statement : creates

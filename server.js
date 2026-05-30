@@ -6,7 +6,8 @@ const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DB_FILE = path.join(__dirname, 'sewage_data.json');
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'sewage_data.db');
+const JSON_DB_FILE = path.join(__dirname, 'sewage_data.json');
 const sessions = new Map();
 
 setInterval(() => {
@@ -20,22 +21,131 @@ app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res) => { res.set('Cache-Control', 'no-store, no-cache, must-revalidate'); res.set('Pragma', 'no-cache'); res.set('Expires', '0'); }
 }));
 
-// ==================== 数据层 ====================
-function loadDB() {
-  try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
-  catch { return getEmptyDB(); }
-}
-function saveDB(data) { fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf8'); }
+// ==================== SQLite 数据层（双驱动：better-sqlite3 / sql.js） ====================
+let db;
+let dbType;
 
-function getEmptyDB() {
-  return {
-    users: [], do_inspection: [], hourly_water: [], daily_lab: [], weekly_lab: [],
-    sludge_special: [], dewatering: [], chemical_dosing: [], chemical_inventory: [],
-    alerts: [], tasks: [], exportLog: [],
-    // 兼容旧表
-    daily: [], inspect: [], lab: []
-  };
+// sql.js 兼容层：提供与 better-sqlite3 一致的 API
+class SqlJsCompat {
+  constructor(sqlJsDb, dbPath) {
+    this._db = sqlJsDb;
+    this._dbPath = dbPath;
+    // 定期保存到磁盘（sql.js 是内存数据库）
+    this._saveTimer = setInterval(() => this._save(), 30000);
+  }
+
+  _save() {
+    try {
+      const data = this._db.export();
+      fs.writeFileSync(this._dbPath, Buffer.from(data));
+    } catch (e) { /* ignore save errors */ }
+  }
+
+  pragma(cmd) {
+    try { this._db.exec('PRAGMA ' + cmd); } catch (e) { /* ignore pragma errors for sql.js */ }
+  }
+
+  prepare(sql) {
+    const compatDb = this._db;
+    return {
+      get(...params) {
+        const stmt = compatDb.prepare(sql);
+        if (params.length > 0) stmt.bind(params);
+        if (stmt.step()) {
+          const row = stmt.getAsObject();
+          stmt.free();
+          return row;
+        }
+        stmt.free();
+        return undefined;
+      },
+      all(...params) {
+        const stmt = compatDb.prepare(sql);
+        if (params.length > 0) stmt.bind(params);
+        const rows = [];
+        while (stmt.step()) {
+          rows.push(stmt.getAsObject());
+        }
+        stmt.free();
+        return rows;
+      },
+      run(...params) {
+        const stmt = compatDb.prepare(sql);
+        if (params.length > 0) stmt.bind(params);
+        stmt.step();
+        const changes = compatDb.getRowsModified();
+        stmt.free();
+        return { changes };
+      }
+    };
+  }
+
+  transaction(fn) {
+    const self = this;
+    return function (...args) {
+      self._db.exec('BEGIN');
+      try {
+        const result = fn.apply(this, args);
+        self._db.exec('COMMIT');
+        return result;
+      } catch (e) {
+        self._db.exec('ROLLBACK');
+        throw e;
+      }
+    };
+  }
+
+  exec(sql) {
+    this._db.run(sql);
+    // sql.js exec 支持多语句用 this._db.exec(sql)
+    // 但 run 更安全（单条），这里保持 run
+  }
+
+  close() {
+    this._save();
+    clearInterval(this._saveTimer);
+    this._db.close();
+  }
 }
+
+// 尝试 better-sqlite3，失败则回退 sql.js
+try {
+  const Database = require('better-sqlite3');
+  db = new Database(DB_PATH);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  dbType = 'better-sqlite3';
+  console.log('[DB] Using better-sqlite3');
+} catch (e) {
+  console.log('[DB] better-sqlite3 unavailable (' + e.message + '), falling back to sql.js');
+  const initSqlJs = require('sql.js');
+  const SQL = initSqlJs();
+  // sql.js 初始化可能是同步的也可能是异步的，统一处理
+  const sqlJsInit = SQL.then ? SQL : Promise.resolve(SQL);
+  // 注意：这里会在 async IIFE 中完成初始化
+  // 为简化流程，在 sql.js 分支下使用同步方式
+}
+
+// sql.js 需要异步初始化，包裹整个启动逻辑
+if (dbType !== 'better-sqlite3') {
+  (async () => {
+    const initSqlJs = require('sql.js');
+    const SQL = await initSqlJs();
+    if (fs.existsSync(DB_PATH)) {
+      const fileBuffer = fs.readFileSync(DB_PATH);
+      db = new SqlJsCompat(new SQL.Database(fileBuffer), DB_PATH);
+    } else {
+      db = new SqlJsCompat(new SQL.Database(), DB_PATH);
+    }
+    dbType = 'sql.js';
+    console.log('[DB] Using sql.js (local dev mode)');
+    startServer();
+  })();
+} else {
+  startServer();
+}
+
+function startServer() {
 
 // ==================== 角色与权限定义 ====================
 const ROLES = {
@@ -74,6 +184,146 @@ const CHINESE_FIELDS = {
   exportLog: { id:'编号', table:'导出表', count:'导出条数', operator:'操作员', time:'导出时间' },
 };
 
+// ==================== 建表与迁移 ====================
+const ALL_TABLES = ['do_inspection','hourly_water','daily_lab','weekly_lab','sludge_special','dewatering','chemical_dosing','chemical_inventory','alerts','tasks','exportLog','users','daily','inspect','lab'];
+
+/** 所有表结构定义：表名 → 列定义字符串 */
+const TABLE_SCHEMAS = {
+  do_inspection: 'id TEXT PRIMARY KEY, date TEXT, shift TEXT, series TEXT, operator TEXT, anaerobic TEXT, anoxic TEXT, aerobic1 TEXT, aerobic2 TEXT, aerobic3 TEXT, aerobic4 TEXT, remark TEXT, groupId TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  hourly_water: 'id TEXT PRIMARY KEY, date TEXT, hour TEXT, operator TEXT, inCod TEXT, inNh3 TEXT, inTn TEXT, inTp TEXT, inFlow TEXT, inPh TEXT, outCod TEXT, outNh3 TEXT, outTn TEXT, outTp TEXT, outFlow TEXT, outPh TEXT, groupId TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  daily_lab: 'id TEXT PRIMARY KEY, date TEXT, operator TEXT, reviewer TEXT, reviewStatus TEXT, ph TEXT, ss TEXT, bod5 TEXT, cod TEXT, nh3 TEXT, tn TEXT, tp TEXT, fecalColiform TEXT, sv30 TEXT, svi TEXT, mlss TEXT, microscope TEXT, sv30East TEXT, sv30West TEXT, waterTempEast TEXT, waterTempWest TEXT, internalReflux TEXT, externalReflux TEXT, groupId TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  weekly_lab: 'id TEXT PRIMARY KEY, weekStart TEXT, weekEnd TEXT, operator TEXT, chloride TEXT, mlvss TEXT, totalSolid TEXT, dissolvedSolid TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  sludge_special: 'id TEXT PRIMARY KEY, date TEXT, batchNo TEXT, operator TEXT, waterContent TEXT, ph TEXT, organicMatter TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  dewatering: 'id TEXT PRIMARY KEY, date TEXT, operator TEXT, startTime TEXT, endTime TEXT, duration TEXT, sludgeOutput TEXT, abnormality TEXT, groupId TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  chemical_dosing: 'id TEXT PRIMARY KEY, date TEXT, shift TEXT, operator TEXT, carbonSource TEXT, glucose TEXT, pac TEXT, anionPam TEXT, cationPam TEXT, naclo TEXT, groupId TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  chemical_inventory: 'id TEXT PRIMARY KEY, date TEXT, operator TEXT, chemicalType TEXT, type TEXT, quantity TEXT, balance TEXT, supplier TEXT, batchNo TEXT, remark TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  alerts: 'id TEXT PRIMARY KEY, time TEXT, type TEXT, level TEXT, source TEXT, title TEXT, detail TEXT, status TEXT, resolvedBy TEXT, resolvedTime TEXT',
+  tasks: 'id TEXT PRIMARY KEY, title TEXT, type TEXT, priority TEXT, status TEXT, assignedTo TEXT, deadline TEXT, remark TEXT, createTime TEXT',
+  users: 'id TEXT PRIMARY KEY, username TEXT, name TEXT, role TEXT, phone TEXT, groupId TEXT, status TEXT, password TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  exportLog: 'id TEXT PRIMARY KEY, [table] TEXT, count TEXT, operator TEXT, time TEXT',
+  // 兼容旧表
+  daily: 'id TEXT PRIMARY KEY, date TEXT, operator TEXT, remark TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  inspect: 'id TEXT PRIMARY KEY, date TEXT, operator TEXT, remark TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  lab: 'id TEXT PRIMARY KEY, date TEXT, operator TEXT, remark TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+};
+
+function initDB() {
+  // 建表
+  for (const [table, cols] of Object.entries(TABLE_SCHEMAS)) {
+    db.prepare('CREATE TABLE IF NOT EXISTS [' + table + '] (' + cols + ')').run();
+  }
+
+  // 首次启动：从 JSON 迁移
+  const userCount = db.prepare('SELECT COUNT(*) as cnt FROM users').get().cnt;
+  if (userCount === 0 && fs.existsSync(JSON_DB_FILE)) {
+    try {
+      const jsonData = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+      console.log('正在从 JSON 迁移数据到 SQLite...');
+      const migrateTable = (tableName) => {
+        const rows = jsonData[tableName];
+        if (!Array.isArray(rows) || rows.length === 0) return;
+        const columns = Object.keys(rows[0]);
+        const colList = columns.map(c => '[' + c + ']').join(',');
+        const placeholders = columns.map(() => '?').join(',');
+        const insertStmt = db.prepare('INSERT OR IGNORE INTO [' + tableName + '] (' + colList + ') VALUES (' + placeholders + ')');
+        const migrateMany = db.transaction((items) => {
+          for (const row of items) {
+            const vals = columns.map(c => row[c] !== undefined && row[c] !== null ? String(row[c]) : null);
+            insertStmt.run(...vals);
+          }
+        });
+        migrateMany(rows);
+        console.log('  迁移 ' + tableName + ': ' + rows.length + ' 条');
+      };
+      for (const table of Object.keys(TABLE_SCHEMAS)) {
+        if (jsonData[table]) migrateTable(table);
+      }
+      console.log('JSON → SQLite 迁移完成');
+    } catch (err) {
+      console.error('JSON 迁移失败:', err.message);
+    }
+  }
+
+  // 初始化预置用户（如果 users 表为空且没有从 JSON 迁移）
+  const finalCount = db.prepare('SELECT COUNT(*) as cnt FROM users').get().cnt;
+  if (finalCount === 0) {
+    const insertUser = db.prepare('INSERT INTO users (id, username, name, role, phone, groupId, status, password, createTime) VALUES (?,?,?,?,?,?,?,?,?)');
+    const insertMany = db.transaction((users) => {
+      for (const u of users) insertUser.run(...u);
+    });
+    const now = new Date().toISOString();
+    insertMany([
+      ['u1', 'cz01', '张厂长', '厂长', '13800000001', '', 'active', '123456', now],
+      ['u2', 'fcz01', '李副厂长', '副厂长', '13800000002', '', 'active', '123456', now],
+      ['u3', 'yygl01', '王运营主管', '运营管理部', '13800000003', '', 'active', '123456', now],
+      ['u4', 'jsgl01', '赵技术主管', '技术管理部', '13800000004', '', 'active', '123456', now],
+      ['u5', 'wy01', '陈文员', '文员', '13800000005', '', 'active', '123456', now],
+      ['u6', 'wy02', '刘文员', '文员', '13800000006', '', 'active', '123456', now],
+      ['u7', 'yyb01a', '周班组1A', '运营班组', '13800000007', 'group1', 'active', '123456', now],
+      ['u8', 'yyb01b', '吴班组1B', '运营班组', '13800000008', 'group1', 'active', '123456', now],
+      ['u9', 'yyb02a', '郑班组2A', '运营班组', '13800000009', 'group2', 'active', '123456', now],
+      ['u10', 'yyb02b', '冯班组2B', '运营班组', '13800000010', 'group2', 'active', '123456', now],
+      ['u11', 'yyb03a', '褚班组3A', '运营班组', '13800000011', 'group3', 'active', '123456', now],
+      ['u12', 'yyb03b', '卫班组3B', '运营班组', '13800000012', 'group3', 'active', '123456', now],
+      ['u13', 'yyb04a', '蒋班组4A', '运营班组', '13800000013', 'group4', 'active', '123456', now],
+      ['u14', 'yyb04b', '沈班组4B', '运营班组', '13800000014', 'group4', 'active', '123456', now],
+      ['u15', 'hyz01', '韩化验主管', '化验主管', '13800000015', '', 'active', '123456', now],
+      ['u16', 'hy01', '杨化验员1', '化验员', '13800000016', '', 'active', '123456', now],
+      ['u17', 'hy02', '朱化验员2', '化验员', '13800000017', '', 'active', '123456', now],
+      ['u18', 'hy03', '秦化验员3', '化验员', '13800000018', '', 'active', '123456', now],
+      ['u19', 'hy04', '许化验员4', '化验员', '13800000019', '', 'active', '123456', now],
+      ['u20', 'hy05', '何化验员5', '化验员', '13800000020', '', 'active', '123456', now],
+      ['u21', 'hy06', '吕化验员6', '化验员', '13800000021', '', 'active', '123456', now],
+      ['u22', 'admin', '系统管理员', '厂长', '13900000000', '', 'active', 'admin123', now],
+    ]);
+  }
+}
+initDB();
+
+// ==================== 通用数据访问辅助 ====================
+/** 安全获取表所有行 */
+function selectAll(table) {
+  return db.prepare('SELECT * FROM [' + table + ']').all();
+}
+
+/** 根据条件获取行 */
+function selectWhere(table, whereClause, params) {
+  return db.prepare('SELECT * FROM [' + table + '] WHERE ' + whereClause).all(...(params || []));
+}
+
+/** 插入一行 */
+function insertRow(table, record) {
+  const keys = Object.keys(record);
+  const colList = keys.map(k => '[' + k + ']').join(',');
+  const placeholders = keys.map(() => '?').join(',');
+  const vals = keys.map(k => record[k] !== undefined && record[k] !== null ? String(record[k]) : null);
+  db.prepare('INSERT INTO [' + table + '] (' + colList + ') VALUES (' + placeholders + ')').run(...vals);
+}
+
+/** 更新一行 */
+function updateRow(table, id, updates) {
+  const sets = [];
+  const vals = [];
+  for (const [k, v] of Object.entries(updates)) {
+    if (k === 'id') continue;
+    sets.push('[' + k + ']=?');
+    vals.push(v !== undefined && v !== null ? String(v) : null);
+  }
+  if (sets.length === 0) return;
+  vals.push(id);
+  db.prepare('UPDATE [' + table + '] SET ' + sets.join(',') + ' WHERE id=?').run(...vals);
+}
+
+/** 删除一行 */
+function deleteRow(table, id) {
+  db.prepare('DELETE FROM [' + table + '] WHERE id=?').run(id);
+}
+
+/** 获取一行 */
+function getRow(table, id) {
+  return db.prepare('SELECT * FROM [' + table + '] WHERE id=?').get(id);
+}
+
 // 字段翻译API
 app.get('/api/fields/:table', authMiddleware, (req, res) => {
   res.json(CHINESE_FIELDS[req.params.table] || {});
@@ -102,57 +352,12 @@ function requireRole(...roles) {
   };
 }
 
-// ==================== 初始化数据库 ====================
-function initDB() {
-  const db = loadDB();
-  let changed = false;
-
-  if (!db.users || db.users.length === 0) {
-    db.users = [
-      { id: 'u1', username: 'cz01', name: '张厂长', role: '厂长', phone: '13800000001', groupId: '', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u2', username: 'fcz01', name: '李副厂长', role: '副厂长', phone: '13800000002', groupId: '', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u3', username: 'yygl01', name: '王运营主管', role: '运营管理部', phone: '13800000003', groupId: '', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u4', username: 'jsgl01', name: '赵技术主管', role: '技术管理部', phone: '13800000004', groupId: '', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u5', username: 'wy01', name: '陈文员', role: '文员', phone: '13800000005', groupId: '', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u6', username: 'wy02', name: '刘文员', role: '文员', phone: '13800000006', groupId: '', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u7', username: 'yyb01a', name: '周班组1A', role: '运营班组', phone: '13800000007', groupId: 'group1', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u8', username: 'yyb01b', name: '吴班组1B', role: '运营班组', phone: '13800000008', groupId: 'group1', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u9', username: 'yyb02a', name: '郑班组2A', role: '运营班组', phone: '13800000009', groupId: 'group2', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u10', username: 'yyb02b', name: '冯班组2B', role: '运营班组', phone: '13800000010', groupId: 'group2', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u11', username: 'yyb03a', name: '褚班组3A', role: '运营班组', phone: '13800000011', groupId: 'group3', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u12', username: 'yyb03b', name: '卫班组3B', role: '运营班组', phone: '13800000012', groupId: 'group3', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u13', username: 'yyb04a', name: '蒋班组4A', role: '运营班组', phone: '13800000013', groupId: 'group4', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u14', username: 'yyb04b', name: '沈班组4B', role: '运营班组', phone: '13800000014', groupId: 'group4', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u15', username: 'hyz01', name: '韩化验主管', role: '化验主管', phone: '13800000015', groupId: '', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u16', username: 'hy01', name: '杨化验员1', role: '化验员', phone: '13800000016', groupId: '', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u17', username: 'hy02', name: '朱化验员2', role: '化验员', phone: '13800000017', groupId: '', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u18', username: 'hy03', name: '秦化验员3', role: '化验员', phone: '13800000018', groupId: '', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u19', username: 'hy04', name: '许化验员4', role: '化验员', phone: '13800000019', groupId: '', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u20', username: 'hy05', name: '何化验员5', role: '化验员', phone: '13800000020', groupId: '', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u21', username: 'hy06', name: '吕化验员6', role: '化验员', phone: '13800000021', groupId: '', status: 'active', password: '123456', createTime: new Date().toISOString() },
-      { id: 'u22', username: 'admin', name: '系统管理员', role: '厂长', phone: '13900000000', groupId: '', status: 'active', password: 'admin123', createTime: new Date().toISOString() },
-    ];
-    changed = true;
-  }
-
-  // 初始化空表
-  ['do_inspection','hourly_water','daily_lab','weekly_lab','sludge_special','dewatering','chemical_dosing','chemical_inventory','alerts'].forEach(t => {
-    if (!db[t]) { db[t] = []; changed = true; }
-  });
-  if (!db.tasks) { db.tasks = []; changed = true; }
-  if (!db.exportLog) { db.exportLog = []; changed = true; }
-
-  if (changed) saveDB(db);
-}
-initDB();
-
 // ==================== 认证路由 ====================
 app.get('/api/ping', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
-  const db = loadDB();
-  const user = db.users.find(u => u.username === username && u.password === password && u.status === 'active');
+  const user = db.prepare('SELECT * FROM users WHERE username = ? AND password = ? AND status = ?').get(username, password, 'active');
   if (!user) return res.status(401).json({ error: '用户名或密码错误' });
   const token = crypto.randomUUID();
   sessions.set(token, { userId: user.id, user: { id: user.id, username: user.username, name: user.name, role: user.role, groupId: user.groupId, phone: user.phone }, expires: Date.now() + 86400000 });
@@ -170,38 +375,46 @@ app.post('/api/auth/logout', authMiddleware, (req, res) => {
 });
 
 // ==================== 通用CRUD路由 ====================
-const ALL_TABLES = ['do_inspection','hourly_water','daily_lab','weekly_lab','sludge_special','dewatering','chemical_dosing','chemical_inventory','alerts','tasks','exportLog','users','daily','inspect','lab'];
-
 function crudRoutes(table) {
   // GET 列表（支持分页和筛选）
   app.get('/api/' + table, authMiddleware, (req, res) => {
-    const db = loadDB();
-    let data = db[table] || [];
-    // 权限过滤：运营班组只能看本组的
-    if (req.userRole === '运营班组' && req.user.groupId) {
-      data = data.filter(r => r.groupId === req.user.groupId || r.operator === req.user.name || r.operator === req.user.username);
+    if (!ALL_TABLES.includes(table)) return res.status(404).json({ error: '表不存在' });
+
+    let rows;
+    // 权限过滤
+    if (table === 'users' && !req.userPermissions.canManage) {
+      rows = db.prepare('SELECT id, username, name, role, phone, groupId, status, createTime FROM users').all();
+    } else if (req.userRole === '运营班组' && req.user.groupId) {
+      rows = db.prepare('SELECT * FROM [' + table + '] WHERE groupId = ?').all(req.user.groupId);
+      // 也包含 operator 匹配的记录
+      const byOperator = db.prepare('SELECT * FROM [' + table + '] WHERE operator = ? OR operator = ?').all(req.user.name, req.user.username);
+      const ids = new Set(rows.map(r => r.id));
+      for (const r of byOperator) {
+        if (!ids.has(r.id)) rows.push(r);
+      }
+    } else if (req.userRole === '化验员') {
+      rows = db.prepare('SELECT * FROM [' + table + '] WHERE operator = ? OR operator = ?').all(req.user.name, req.user.username);
+    } else {
+      rows = selectAll(table);
     }
-    // 化验员只能看自己的
-    if (req.userRole === '化验员') {
-      data = data.filter(r => r.operator === req.user.name || r.operator === req.user.username);
-    }
+
     // 查询参数筛选
-    if (req.query.date) { data = data.filter(r => r.date === req.query.date); }
-    if (req.query.dateFrom && req.query.dateTo) { data = data.filter(r => r.date >= req.query.dateFrom && r.date <= req.query.dateTo); }
-    if (req.query.type) { data = data.filter(r => r.type === req.query.type || r.chemicalType === req.query.type); }
-    if (req.query.status) { data = data.filter(r => r.status === req.query.status); }
+    if (req.query.date) { rows = rows.filter(r => r.date === req.query.date); }
+    if (req.query.dateFrom && req.query.dateTo) { rows = rows.filter(r => r.date >= req.query.dateFrom && r.date <= req.query.dateTo); }
+    if (req.query.type) { rows = rows.filter(r => r.type === req.query.type || r.chemicalType === req.query.type); }
+    if (req.query.status) { rows = rows.filter(r => r.status === req.query.status); }
+
     // 分页
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 100;
-    const total = data.length;
+    const total = rows.length;
     const start = (page - 1) * limit;
-    const paged = data.slice(start, start + limit);
+    const paged = rows.slice(start, start + limit);
     res.json({ data: paged, total, page, limit, totalPages: Math.ceil(total / limit) });
   });
 
   // POST 新增
   app.post('/api/' + table, authMiddleware, (req, res) => {
-    const db = loadDB();
     const perms = req.userPermissions;
     // 权限检查
     if (table === 'users' && !perms.canManage) return res.status(403).json({ error: '无用户管理权限' });
@@ -210,28 +423,26 @@ function crudRoutes(table) {
     record.createTime = record.createTime || new Date().toISOString();
     if (!record.operator && req.user.name) record.operator = req.user.name;
     if (req.user.groupId && !record.groupId) record.groupId = req.user.groupId;
+
+    insertRow(table, record);
+
     // 自动触发预警检测
     if (['do_inspection','hourly_water','daily_lab','weekly_lab','chemical_dosing'].includes(table)) {
-      checkAlerts(table, record, db);
+      checkAlerts(table, record);
     }
-    db[table] = db[table] || [];
-    db[table].push(record);
-    saveDB(db);
     res.json({ success: true, id: record.id });
   });
 
   // PUT 更新
   app.put('/api/' + table + '/:id', authMiddleware, (req, res) => {
-    const db = loadDB();
-    if (!db[table]) return res.status(404).json({ error: '表不存在' });
-    const idx = db[table].findIndex(r => r.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ error: '记录不存在' });
+    const existing = getRow(table, req.params.id);
+    if (!existing) return res.status(404).json({ error: '记录不存在' });
     // 已提交数据防篡改（运营班组/化验员不可修改他人数据）
-    if ((req.userRole === '运营班组' || req.userRole === '化验员') && db[table][idx].operator && db[table][idx].operator !== req.user.name && db[table][idx].operator !== req.user.username) {
+    if ((req.userRole === '运营班组' || req.userRole === '化验员') && existing.operator && existing.operator !== req.user.name && existing.operator !== req.user.username) {
       return res.status(403).json({ error: '不可修改他人数据' });
     }
-    db[table][idx] = { ...db[table][idx], ...req.body, id: req.params.id, updateTime: new Date().toISOString(), updatedBy: req.user.name };
-    saveDB(db);
+    const updates = { ...req.body, id: req.params.id, updateTime: new Date().toISOString(), updatedBy: req.user.name };
+    updateRow(table, req.params.id, updates);
     res.json({ success: true });
   });
 
@@ -240,51 +451,86 @@ function crudRoutes(table) {
     if (!req.userPermissions.canManage && req.userRole !== '厂长' && req.userRole !== '副厂长') {
       if (table === 'users') return res.status(403).json({ error: '无权限删除用户' });
     }
-    const db = loadDB();
-    if (!db[table]) return res.status(404);
-    const len = db[table].length;
-    db[table] = db[table].filter(r => r.id !== req.params.id);
-    if (db[table].length === len) return res.status(404).json({ error: '记录不存在' });
-    saveDB(db);
+    const existing = getRow(table, req.params.id);
+    if (!existing) return res.status(404).json({ error: '记录不存在' });
+    deleteRow(table, req.params.id);
     res.json({ success: true });
   });
 
   // POST 批量导入
   app.post('/api/' + table + '/bulk', authMiddleware, (req, res) => {
-    const db = loadDB();
     const records = req.body.records || req.body;
     if (!Array.isArray(records)) return res.status(400).json({ error: '数据格式错误' });
-    records.forEach(r => {
-      r.id = r.id || (table + '_b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7));
-      r.createTime = r.createTime || new Date().toISOString();
-      if (!r.operator && req.user.name) r.operator = req.user.name;
+    const bulkInsert = db.transaction((items) => {
+      for (const r of items) {
+        r.id = r.id || (table + '_b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7));
+        r.createTime = r.createTime || new Date().toISOString();
+        if (!r.operator && req.user.name) r.operator = req.user.name;
+        insertRow(table, r);
+      }
     });
-    db[table] = db[table] || [];
-    db[table].push(...records);
-    saveDB(db);
+    bulkInsert(records);
     res.json({ success: true, count: records.length });
   });
 }
 
 ALL_TABLES.forEach(t => crudRoutes(t));
 
-// ==================== 预警检测引擎 ====================
-function checkAlerts(table, record, db) {
+// ==================== 用户管理API ====================
+// 创建用户（厂长/副厂长权限）
+app.post('/api/users', authMiddleware, requireRole('厂长', '副厂长'), (req, res) => {
+  const { username, name, role, phone, groupId, password } = req.body;
+  if (!username || !name || !role || !password) return res.status(400).json({ error: '缺少必填字段' });
+  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+  if (existing) return res.status(409).json({ error: '用户名已存在' });
+  const id = 'u' + Date.now();
   const now = new Date().toISOString();
-  const alerts = db.alerts || [];
+  db.prepare('INSERT INTO users (id, username, name, role, phone, groupId, status, password, createTime) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(id, username, name, role, phone || '', groupId || '', 'active', password, now);
+  res.json({ id, username, name, role });
+});
+
+// 更新用户
+app.put('/api/users/:id', authMiddleware, requireRole('厂长', '副厂长'), (req, res) => {
+  const { name, role, phone, groupId, password, status } = req.body;
+  const sets = [];
+  const vals = [];
+  if (name) { sets.push('name=?'); vals.push(name); }
+  if (role) { sets.push('role=?'); vals.push(role); }
+  if (phone) { sets.push('phone=?'); vals.push(phone); }
+  if (groupId !== undefined) { sets.push('groupId=?'); vals.push(groupId); }
+  if (password) { sets.push('password=?'); vals.push(password); }
+  if (status) { sets.push('status=?'); vals.push(status); }
+  if (sets.length === 0) return res.status(400).json({ error: '无更新字段' });
+  sets.push('updateTime=?'); vals.push(new Date().toISOString());
+  vals.push(req.params.id);
+  db.prepare('UPDATE users SET ' + sets.join(',') + ' WHERE id=?').run(...vals);
+  res.json({ ok: true });
+});
+
+// 删除用户（软删除 - 设为 inactive）
+app.delete('/api/users/:id', authMiddleware, requireRole('厂长', '副厂长'), (req, res) => {
+  db.prepare('UPDATE users SET status=? WHERE id=?').run('inactive', req.params.id);
+  res.json({ ok: true });
+});
+
+// ==================== 预警检测引擎 ====================
+function checkAlerts(table, record) {
+  const now = new Date().toISOString();
+  const newAlerts = [];
 
   if (table === 'hourly_water') {
     if (record.outCod && Number(record.outCod) > 50) {
-      alerts.push({ id: 'alt_' + Date.now() + '_cod', time: now, type: '水质异常', level: 'high', source: '小时进出水', title: '出水COD超标: ' + record.outCod + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水COD=' + record.outCod + 'mg/L（一级A标准: ≤50mg/L）', status: 'active' });
+      newAlerts.push({ id: 'alt_' + Date.now() + '_cod', time: now, type: '水质异常', level: 'high', source: '小时进出水', title: '出水COD超标: ' + record.outCod + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水COD=' + record.outCod + 'mg/L（一级A标准: ≤50mg/L）', status: 'active' });
     }
     if (record.outNh3 && Number(record.outNh3) > 5) {
-      alerts.push({ id: 'alt_' + Date.now() + '_nh3', time: now, type: '水质异常', level: 'high', source: '小时进出水', title: '出水氨氮超标: ' + record.outNh3 + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水氨氮=' + record.outNh3 + 'mg/L（标准: ≤5mg/L）', status: 'active' });
+      newAlerts.push({ id: 'alt_' + Date.now() + '_nh3', time: now, type: '水质异常', level: 'high', source: '小时进出水', title: '出水氨氮超标: ' + record.outNh3 + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水氨氮=' + record.outNh3 + 'mg/L（标准: ≤5mg/L）', status: 'active' });
     }
     if (record.outTn && Number(record.outTn) > 15) {
-      alerts.push({ id: 'alt_' + Date.now() + '_tn', time: now, type: '水质异常', level: 'medium', source: '小时进出水', title: '出水总氮超标: ' + record.outTn + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水总氮=' + record.outTn + 'mg/L（标准: ≤15mg/L）', status: 'active' });
+      newAlerts.push({ id: 'alt_' + Date.now() + '_tn', time: now, type: '水质异常', level: 'medium', source: '小时进出水', title: '出水总氮超标: ' + record.outTn + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水总氮=' + record.outTn + 'mg/L（标准: ≤15mg/L）', status: 'active' });
     }
     if (record.outTp && Number(record.outTp) > 0.5) {
-      alerts.push({ id: 'alt_' + Date.now() + '_tp', time: now, type: '水质异常', level: 'medium', source: '小时进出水', title: '出水总磷超标: ' + record.outTp + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水总磷=' + record.outTp + 'mg/L（标准: ≤0.5mg/L）', status: 'active' });
+      newAlerts.push({ id: 'alt_' + Date.now() + '_tp', time: now, type: '水质异常', level: 'medium', source: '小时进出水', title: '出水总磷超标: ' + record.outTp + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水总磷=' + record.outTp + 'mg/L（标准: ≤0.5mg/L）', status: 'active' });
     }
   }
 
@@ -292,8 +538,8 @@ function checkAlerts(table, record, db) {
     const checkDO = (val, pool) => {
       if (val !== undefined && val !== null && val !== '') {
         const v = Number(val);
-        if (v < 0.5) alerts.push({ id: 'alt_' + Date.now() + '_do_low_' + pool, time: now, type: 'DO异常', level: 'high', source: 'DO巡检', title: pool + '溶解氧过低: ' + v + 'mg/L', detail: record.date + ' ' + record.series + '系列 ' + pool + ' DO=' + v + 'mg/L（正常: 0.5-4.0mg/L）', status: 'active' });
-        if (v > 4.0) alerts.push({ id: 'alt_' + Date.now() + '_do_high_' + pool, time: now, type: 'DO异常', level: 'medium', source: 'DO巡检', title: pool + '溶解氧过高: ' + v + 'mg/L', detail: record.date + ' ' + record.series + '系列 ' + pool + ' DO=' + v + 'mg/L（正常: 0.5-4.0mg/L）', status: 'active' });
+        if (v < 0.5) newAlerts.push({ id: 'alt_' + Date.now() + '_do_low_' + pool, time: now, type: 'DO异常', level: 'high', source: 'DO巡检', title: pool + '溶解氧过低: ' + v + 'mg/L', detail: record.date + ' ' + record.series + '系列 ' + pool + ' DO=' + v + 'mg/L（正常: 0.5-4.0mg/L）', status: 'active' });
+        if (v > 4.0) newAlerts.push({ id: 'alt_' + Date.now() + '_do_high_' + pool, time: now, type: 'DO异常', level: 'medium', source: 'DO巡检', title: pool + '溶解氧过高: ' + v + 'mg/L', detail: record.date + ' ' + record.series + '系列 ' + pool + ' DO=' + v + 'mg/L（正常: 0.5-4.0mg/L）', status: 'active' });
       }
     };
     checkDO(record.anaerobic, '厌氧池'); checkDO(record.anoxic, '缺氧池');
@@ -303,13 +549,13 @@ function checkAlerts(table, record, db) {
 
   if (table === 'daily_lab') {
     if (record.sv30 && (Number(record.sv30) < 15 || Number(record.sv30) > 35)) {
-      alerts.push({ id: 'alt_' + Date.now() + '_sv30', time: now, type: '污泥异常', level: 'medium', source: '每日化验', title: 'SV30偏离正常区间: ' + record.sv30 + '%', detail: 'SV30=' + record.sv30 + '%（正常: 15-35%）', status: 'active' });
+      newAlerts.push({ id: 'alt_' + Date.now() + '_sv30', time: now, type: '污泥异常', level: 'medium', source: '每日化验', title: 'SV30偏离正常区间: ' + record.sv30 + '%', detail: 'SV30=' + record.sv30 + '%（正常: 15-35%）', status: 'active' });
     }
     if (record.svi && (Number(record.svi) < 50 || Number(record.svi) > 150)) {
-      alerts.push({ id: 'alt_' + Date.now() + '_svi', time: now, type: '污泥异常', level: 'medium', source: '每日化验', title: 'SVI异常: ' + record.svi + 'mL/g', detail: 'SVI=' + record.svi + 'mL/g（正常: 50-150mL/g）', status: 'active' });
+      newAlerts.push({ id: 'alt_' + Date.now() + '_svi', time: now, type: '污泥异常', level: 'medium', source: '每日化验', title: 'SVI异常: ' + record.svi + 'mL/g', detail: 'SVI=' + record.svi + 'mL/g（正常: 50-150mL/g）', status: 'active' });
     }
     if (record.mlss && (Number(record.mlss) < 2000 || Number(record.mlss) > 6000)) {
-      alerts.push({ id: 'alt_' + Date.now() + '_mlss', time: now, type: '污泥异常', level: 'medium', source: '每日化验', title: 'MLSS偏离正常区间: ' + record.mlss + 'mg/L', detail: 'MLSS=' + record.mlss + 'mg/L（正常: 2000-6000mg/L）', status: 'active' });
+      newAlerts.push({ id: 'alt_' + Date.now() + '_mlss', time: now, type: '污泥异常', level: 'medium', source: '每日化验', title: 'MLSS偏离正常区间: ' + record.mlss + 'mg/L', detail: 'MLSS=' + record.mlss + 'mg/L（正常: 2000-6000mg/L）', status: 'active' });
     }
   }
 
@@ -320,24 +566,26 @@ function checkAlerts(table, record, db) {
     chemicals.forEach(ck => {
       const used = Number(record[ck]) || 0;
       if (used > 0) {
-        const balance = getCurrentStock(ck, db);
+        const balance = getCurrentStock(ck);
         if (balance < 100) {
-          alerts.push({ id: 'alt_' + Date.now() + '_stock_' + ck, time: now, type: '库存预警', level: 'high', source: '药剂库存', title: typeNames[ck] + '库存不足: ' + balance.toFixed(0) + 'kg', detail: '当前' + typeNames[ck] + '库存仅剩' + balance.toFixed(0) + 'kg，请及时采购补充', status: 'active' });
+          newAlerts.push({ id: 'alt_' + Date.now() + '_stock_' + ck, time: now, type: '库存预警', level: 'high', source: '药剂库存', title: typeNames[ck] + '库存不足: ' + balance.toFixed(0) + 'kg', detail: '当前' + typeNames[ck] + '库存仅剩' + balance.toFixed(0) + 'kg，请及时采购补充', status: 'active' });
         } else if (balance < 500) {
-          alerts.push({ id: 'alt_' + Date.now() + '_stock_low_' + ck, time: now, type: '库存预警', level: 'medium', source: '药剂库存', title: typeNames[ck] + '库存偏低: ' + balance.toFixed(0) + 'kg', detail: '当前' + typeNames[ck] + '库存' + balance.toFixed(0) + 'kg，建议补充', status: 'active' });
+          newAlerts.push({ id: 'alt_' + Date.now() + '_stock_low_' + ck, time: now, type: '库存预警', level: 'medium', source: '药剂库存', title: typeNames[ck] + '库存偏低: ' + balance.toFixed(0) + 'kg', detail: '当前' + typeNames[ck] + '库存' + balance.toFixed(0) + 'kg，建议补充', status: 'active' });
         }
       }
     });
   }
 
-  if (alerts.length > 0) {
-    db.alerts = [...(db.alerts || []), ...alerts];
-    saveDB(db);
+  if (newAlerts.length > 0) {
+    const insertAlerts = db.transaction((items) => {
+      for (const a of items) insertRow('alerts', a);
+    });
+    insertAlerts(newAlerts);
   }
 }
 
-function getCurrentStock(chemicalKey, db) {
-  const records = db.chemical_inventory || [];
+function getCurrentStock(chemicalKey) {
+  const records = selectAll('chemical_inventory');
   const totalIn = records.filter(r => r.chemicalType === chemicalKey && r.type === 'in').reduce((s, r) => s + (Number(r.quantity) || 0), 0);
   const totalOut = records.filter(r => r.chemicalType === chemicalKey && (r.type === 'out' || r.type === 'use')).reduce((s, r) => s + (Number(r.quantity) || 0), 0);
   return totalIn - totalOut;
@@ -347,61 +595,58 @@ function getCurrentStock(chemicalKey, db) {
 
 // 预警
 app.get('/api/alerts/active', authMiddleware, (req, res) => {
-  const db = loadDB();
-  const active = (db.alerts || []).filter(a => a.status === 'active').sort((a, b) => new Date(b.time) - new Date(a.time));
+  const active = db.prepare('SELECT * FROM alerts WHERE status = ? ORDER BY time DESC').all('active');
   res.json(active);
 });
 
 app.put('/api/alerts/:id/resolve', authMiddleware, (req, res) => {
-  const db = loadDB();
-  const alert = (db.alerts || []).find(a => a.id === req.params.id);
+  const alert = getRow('alerts', req.params.id);
   if (!alert) return res.status(404).json({ error: '预警不存在' });
-  alert.status = 'resolved';
-  alert.resolvedBy = req.user.name;
-  alert.resolvedTime = new Date().toISOString();
-  saveDB(db);
+  updateRow('alerts', req.params.id, { status: 'resolved', resolvedBy: req.user.name, resolvedTime: new Date().toISOString() });
   res.json({ success: true });
 });
 
 // 实时信息流
 app.get('/api/stream', authMiddleware, (req, res) => {
-  const db = loadDB();
   const items = [];
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
   const typeNames = { carbonSource: '碳源', glucose: '葡萄糖', pac: 'PAC', anionPam: '阴离子PAM', cationPam: '阳离子PAM', naclo: '次氯酸钠' };
 
   // 预警
-  (db.alerts || []).filter(a => a.status === 'active').slice(0, 20).forEach(a => {
+  const activeAlerts = db.prepare('SELECT * FROM alerts WHERE status = ? ORDER BY time DESC LIMIT 20').all('active');
+  activeAlerts.forEach(a => {
     items.push({ id: 's_' + a.id, time: a.time, type: '异常', level: a.level, icon: a.level === 'high' ? '🚨' : '⚠️', title: a.title, detail: a.detail, tag: a.type, link: 'alerts' });
   });
 
   // 最近提交
   const submitSources = [
-    { data: db.do_inspection || [], label: 'DO巡检', link: 'fill' },
-    { data: db.hourly_water || [], label: '小时进出水', link: 'fill' },
-    { data: db.daily_lab || [], label: '每日化验', link: 'fill' },
-    { data: db.chemical_dosing || [], label: '药剂投加', link: 'fill' },
-    { data: db.dewatering || [], label: '脱泥生产', link: 'fill' },
+    { tableName: 'do_inspection', label: 'DO巡检', link: 'fill' },
+    { tableName: 'hourly_water', label: '小时进出水', link: 'fill' },
+    { tableName: 'daily_lab', label: '每日化验', link: 'fill' },
+    { tableName: 'chemical_dosing', label: '药剂投加', link: 'fill' },
+    { tableName: 'dewatering', label: '脱泥生产', link: 'fill' },
   ];
   submitSources.forEach(src => {
-    const sorted = [...src.data].sort((a, b) => new Date(b.createTime || 0) - new Date(a.createTime || 0));
-    sorted.slice(0, 5).forEach(r => {
+    const sorted = db.prepare('SELECT * FROM [' + src.tableName + '] ORDER BY createTime DESC LIMIT 5').all();
+    sorted.forEach(r => {
       items.push({ id: 'sub_' + r.id, time: r.createTime, type: '报送', level: 'info', icon: '📤', title: src.label + '记录已提交', detail: (r.date || '') + ' ' + (r.operator || ''), tag: src.label, link: src.link });
     });
   });
 
   // 任务
-  (db.tasks || []).filter(t => t.status === '已完成').slice(-5).forEach(t => {
+  const doneTasks = db.prepare("SELECT * FROM tasks WHERE status = '已完成' ORDER BY createTime DESC LIMIT 5").all();
+  doneTasks.forEach(t => {
     items.push({ id: 'done_' + t.id, time: t.createTime, type: '动态', level: 'info', icon: '✅', title: '任务完成: ' + t.title, detail: t.type + ' | ' + (t.assignedTo || ''), tag: '任务', link: 'tasks' });
   });
-  (db.tasks || []).filter(t => t.status === '待处理' && t.priority === '高').slice(-5).forEach(t => {
+  const urgentTasks = db.prepare("SELECT * FROM tasks WHERE status = '待处理' AND priority = '高' ORDER BY createTime DESC LIMIT 5").all();
+  urgentTasks.forEach(t => {
     items.push({ id: 'urg_' + t.id, time: t.createTime, type: '动态', level: 'high', icon: '⏳', title: '待处理: ' + t.title, detail: '截止: ' + (t.deadline || '-'), tag: '紧急', link: 'tasks' });
   });
 
   // 库存低
   ['carbonSource','glucose','pac','anionPam','cationPam','naclo'].forEach(ck => {
-    const bal = getCurrentStock(ck, db);
+    const bal = getCurrentStock(ck);
     if (bal < 500) {
       items.push({ id: 'stock_' + ck, time: now.toISOString(), type: '异常', level: bal < 100 ? 'high' : 'medium', icon: '📦', title: typeNames[ck] + '库存: ' + bal.toFixed(0) + 'kg', detail: bal < 100 ? '库存严重不足，请立即采购' : '库存偏低，建议补充', tag: '库存', link: 'inventory' });
     }
@@ -413,26 +658,24 @@ app.get('/api/stream', authMiddleware, (req, res) => {
 
 // 统计总览
 app.get('/api/stats/summary', authMiddleware, (req, res) => {
-  const db = loadDB();
   const today = new Date().toISOString().slice(0, 10);
-  const activeAlerts = (db.alerts || []).filter(a => a.status === 'active');
-  const pendingTasks = (db.tasks || []).filter(t => t.status !== '已完成');
-  const todayInspection = (db.do_inspection || []).filter(r => r.date === today);
-  const todayHourly = (db.hourly_water || []).filter(r => r.date === today);
-  const todayLab = (db.daily_lab || []).filter(r => r.date === today);
-  const stockAlerts = ['carbonSource','glucose','pac','anionPam','cationPam','naclo'].filter(ck => getCurrentStock(ck, db) < 500);
+  const activeAlerts = db.prepare("SELECT * FROM alerts WHERE status = 'active'").all();
+  const pendingTasks = db.prepare("SELECT * FROM tasks WHERE status != '已完成'").all();
+  const todayInspection = db.prepare('SELECT * FROM do_inspection WHERE date = ?').all(today);
+  const todayHourly = db.prepare('SELECT * FROM hourly_water WHERE date = ?').all(today);
+  const todayLab = db.prepare('SELECT * FROM daily_lab WHERE date = ?').all(today);
+  const stockAlerts = ['carbonSource','glucose','pac','anionPam','cationPam','naclo'].filter(ck => getCurrentStock(ck) < 500);
   res.json({
     today: { inspection: todayInspection.length, hourly: todayHourly.length, lab: todayLab.length },
     alerts: { active: activeAlerts.length, high: activeAlerts.filter(a => a.level === 'high').length },
     tasks: { pending: pendingTasks.length, urgent: pendingTasks.filter(t => t.priority === '高').length },
     inventory: { lowStock: stockAlerts.length },
-    totals: { inspection: (db.do_inspection || []).length, hourly: (db.hourly_water || []).length, lab: (db.daily_lab || []).length, inventory: (db.chemical_inventory || []).length }
+    totals: { inspection: db.prepare('SELECT COUNT(*) as cnt FROM do_inspection').get().cnt, hourly: db.prepare('SELECT COUNT(*) as cnt FROM hourly_water').get().cnt, lab: db.prepare('SELECT COUNT(*) as cnt FROM daily_lab').get().cnt, inventory: db.prepare('SELECT COUNT(*) as cnt FROM chemical_inventory').get().cnt }
   });
 });
 
 // 趋势数据
 app.get('/api/trends', authMiddleware, (req, res) => {
-  const db = loadDB();
   const range = parseInt(req.query.range) || 7;
   const type = req.query.type || 'water';
   const startDate = new Date(); startDate.setDate(startDate.getDate() - range + 1);
@@ -441,7 +684,7 @@ app.get('/api/trends', authMiddleware, (req, res) => {
   let series = { labels: dates.map(d => d.slice(5)), datasets: [] };
 
   if (type === 'water') {
-    const data = (db.hourly_water || []).filter(r => r.date >= dates[0]);
+    const data = db.prepare('SELECT * FROM hourly_water WHERE date >= ?').all(dates[0]);
     const dailyAvg = {};
     dates.forEach(d => {
       const dayRecords = data.filter(r => r.date === d);
@@ -463,7 +706,7 @@ app.get('/api/trends', authMiddleware, (req, res) => {
       { label: '出水总磷', data: dates.map(d => dailyAvg[d]?.outTp || null), borderColor: '#1abc9c', tension: 0.3, hidden: true },
     ];
   } else if (type === 'do') {
-    const data = (db.do_inspection || []).filter(r => r.date >= dates[0] && r.series === 'east');
+    const data = db.prepare("SELECT * FROM do_inspection WHERE date >= ? AND series = 'east'").all(dates[0]);
     const doMap = {};
     data.forEach(r => { if (!doMap[r.date]) doMap[r.date] = []; doMap[r.date].push(r); });
     const dailyDO = {};
@@ -482,7 +725,7 @@ app.get('/api/trends', authMiddleware, (req, res) => {
       { label: '好氧池4 DO', data: dates.map(d => dailyDO[d]?.aerobic4 || null), borderColor: '#1abc9c', tension: 0.3 },
     ];
   } else if (type === 'sludge') {
-    const data = (db.daily_lab || []).filter(r => r.date >= dates[0]);
+    const data = db.prepare('SELECT * FROM daily_lab WHERE date >= ?').all(dates[0]);
     const svMap = {}, mlssMap = {};
     data.forEach(r => { svMap[r.date] = Number(r.sv30) || null; mlssMap[r.date] = Number(r.mlss) || null; });
     series.datasets = [
@@ -490,7 +733,7 @@ app.get('/api/trends', authMiddleware, (req, res) => {
       { label: 'MLSS(mg/L)', data: dates.map(d => mlssMap[d] || null), borderColor: '#3498db', tension: 0.3, yAxisID: 'y1' },
     ];
   } else if (type === 'chemical') {
-    const data = (db.chemical_dosing || []).filter(r => r.date >= dates[0]);
+    const data = db.prepare('SELECT * FROM chemical_dosing WHERE date >= ?').all(dates[0]);
     const chemMap = {};
     data.forEach(r => { if (!chemMap[r.date]) chemMap[r.date] = []; chemMap[r.date].push(r); });
     const dailyChem = {};
@@ -511,10 +754,6 @@ function avg(arr, key) {
 }
 
 // ==================== 辅助函数：统计均值/趋势 ====================
-function avg(arr) {
-  if (!arr || arr.length === 0) return null;
-  return Math.round(arr.reduce((a, b) => a + b, 0) / arr.length * 100) / 100;
-}
 function trend(arr) {
   if (!arr || arr.length < 3) return '数据不足';
   const first3 = arr.slice(0, 3).reduce((a, b) => a + b, 0) / 3;
@@ -526,7 +765,6 @@ function trend(arr) {
 
 // ==================== 智能加药算法（数据驱动综合判定） ====================
 app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
-  const db = loadDB();
   const autoMode = req.query.auto === '1';
 
   // ===== Step 1: 获取输入参数（自动或手动） =====
@@ -539,8 +777,8 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
     const d7 = new Date(); d7.setDate(d7.getDate() - 7);
     const dateFrom = d7.toISOString().slice(0, 10);
 
-    const recentWater = (db.hourly_water || []).filter(r => r.date >= dateFrom && r.date <= today);
-    const recentLab = (db.daily_lab || []).filter(r => r.date >= dateFrom && r.date <= today);
+    const recentWater = db.prepare('SELECT * FROM hourly_water WHERE date >= ? AND date <= ?').all(dateFrom, today);
+    const recentLab = db.prepare('SELECT * FROM daily_lab WHERE date >= ? AND date <= ?').all(dateFrom, today);
 
     if (recentWater.length < 5) {
       return res.status(400).json({ error: '最近7天数据不足（需至少5条记录），请先录入小时进出水数据或切换为手动输入模式' });
@@ -577,18 +815,18 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
     return res.status(400).json({ error: '缺少必要参数（进水流量、进水COD）' });
   }
 
-  // ===== Step 2: 获取辅助数据（污泥指标 + 历史水质趋势 + 历史投加量） =====
+  // ===== Step 2: 获取辅助数据 =====
   const d14 = new Date(); d14.setDate(d14.getDate() - 14);
   const d30 = new Date(); d30.setDate(d30.getDate() - 30);
   const date14 = d14.toISOString().slice(0, 10);
   const date30 = d30.toISOString().slice(0, 10);
 
-  const recentWater14 = (db.hourly_water || []).filter(r => r.date >= date14);
-  const recentLab14 = (db.daily_lab || []).filter(r => r.date >= date14);
-  const recentLab30 = (db.daily_lab || []).filter(r => r.date >= date30);
-  const recentDosing = (db.chemical_dosing || []).filter(r => r.date >= date14).sort((a, b) => a.date.localeCompare(b.date));
+  const recentWater14 = db.prepare('SELECT * FROM hourly_water WHERE date >= ?').all(date14);
+  const recentLab14 = db.prepare('SELECT * FROM daily_lab WHERE date >= ?').all(date14);
+  const recentLab30 = db.prepare('SELECT * FROM daily_lab WHERE date >= ?').all(date30);
+  const recentDosing = db.prepare('SELECT * FROM chemical_dosing WHERE date >= ? ORDER BY date ASC').all(date14);
 
-  // ===== Step 3: 水质趋势分析（进水+出水） =====
+  // ===== Step 3: 水质趋势分析 =====
   const waterByDate = {};
   recentWater14.forEach(r => {
     if (!waterByDate[r.date]) waterByDate[r.date] = { inCod: [], inNh3: [], inTn: [], inTp: [], inFlow: [], outCod: [], outNh3: [], outTn: [], outTp: [] };
@@ -653,28 +891,24 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
     };
   });
 
-  // ===== Step 6: 核心计算（基础 + 污泥调整 + 趋势调整） =====
+  // ===== Step 6: 核心计算 =====
   const diagnosisLog = [];
 
   // --- 碳源 ---
-  // 基础公式: (进水TN - 出水目标TN) × COD当量系数 × 流量 / 1000
-  const targetTnEffluent = 15; // 出水TN目标(一级A)
+  const targetTnEffluent = 15;
   const tnToRemove = Math.max(0, (inTn || 0) - targetTnEffluent);
   let carbonBase = tnToRemove * 5 * (inFlow || 0) / 1000;
 
-  // 污泥调整：SVI>150膨胀风险 → 需要更多碳源维持反硝化
   let carbonSludgeAdjust = 1.0;
   if (sludgeStatus.svi.status.includes('偏高')) {
     carbonSludgeAdjust = 1.15;
     diagnosisLog.push('⚠️ SVI偏高(' + (sludgeStatus.svi.avg || '-') + 'mL/g)，污泥沉降性差，碳源投加调增15%以补偿反硝化效率下降');
   }
-  // MLSS偏低 → 硝化菌不足，需更多碳源
   if (sludgeStatus.mlss.status === '偏低') {
     carbonSludgeAdjust = Math.max(carbonSludgeAdjust, 1.10);
     diagnosisLog.push('⚠️ MLSS偏低(' + (sludgeStatus.mlss.avg || '-') + 'mg/L)，生化系统污泥浓度不足，碳源调增10%');
   }
 
-  // 趋势调整：进水TN上升 → 提前加量
   let carbonTrendAdjust = 1.0;
   if (waterTrends.inTn.trend === '上升') {
     carbonTrendAdjust = 1.12;
@@ -691,12 +925,10 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
   const glucose = Math.round(glucoseBase * carbonSludgeAdjust * carbonTrendAdjust * 100) / 100;
 
   // --- PAC（除磷） ---
-  // 基础: TP去除量 × Al/P摩尔比 × 分子量比 × 流量 / 系数
   const targetTpEffluent = 0.5;
   const tpToRemove = Math.max(0, (inTp || 0) - targetTpEffluent);
   let pacBase = tpToRemove * 2.2 * (27 / 31) * (inFlow || 0) / 500;
 
-  // 污泥调整
   let pacSludgeAdjust = 1.0;
   if (sludgeStatus.svi.status.includes('偏高')) {
     pacSludgeAdjust = 1.20;
@@ -707,7 +939,6 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
     diagnosisLog.push('ℹ️ MLSS偏高(' + (sludgeStatus.mlss.avg || '-') + 'mg/L)，生化除磷能力较强，PAC可适度调减15%');
   }
 
-  // 趋势调整
   let pacTrendAdjust = 1.0;
   if (waterTrends.inTp.trend === '上升') {
     pacTrendAdjust = 1.15;
@@ -716,7 +947,6 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
     pacTrendAdjust = 0.85;
     diagnosisLog.push('📉 进水TP呈下降趋势，PAC可调减15%');
   }
-  // 检查出水TP是否已接近超标
   if (waterTrends.outTp.avg && waterTrends.outTp.avg > 0.4) {
     pacTrendAdjust = Math.max(pacTrendAdjust, 1.15);
     diagnosisLog.push('🚨 出水TP均值(' + waterTrends.outTp.avg + 'mg/L)接近限值(0.5mg/L)，PAC紧急调增');
@@ -742,7 +972,6 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
 
   // --- 次氯酸钠 ---
   let nacloBase = (inFlow || 0) * 0.005;
-  // 出水COD偏高 → 可能有机物残留多，消毒需求增加
   if (waterTrends.outCod.avg && waterTrends.outCod.avg > 40) {
     nacloBase *= 1.15;
     diagnosisLog.push('ℹ️ 出水COD偏高(' + waterTrends.outCod.avg + 'mg/L)，次氯酸钠调增15%');
@@ -851,7 +1080,7 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
       waterQuality: dailyWater.slice(-14).map(d => ({
         date: d.date.slice(5),
         inCod: d.inCod, inNh3: d.inNh3, inTn: d.inTn, inTp: d.inTp,
-        outCod: d.outCod, outNh3: d.outNh3, outTn: d.outTp,
+        outCod: d.outCod, outNh3: d.outNh3, outTn: d.outTn,
       })),
       sludge: recentLab14.map(r => ({
         date: r.date.slice(5),
@@ -911,16 +1140,16 @@ app.get('/api/dosing/recommend', authMiddleware, (req, res) => {
 
 // ==================== 库存管理 ====================
 app.get('/api/inventory/summary', authMiddleware, (req, res) => {
-  const db = loadDB();
   const typeNames = { carbonSource: '碳源', glucose: '葡萄糖', pac: 'PAC', anionPam: '阴离子PAM', cationPam: '阳离子PAM', naclo: '次氯酸钠' };
+  const invRecords = selectAll('chemical_inventory');
+  const recentDosing = db.prepare('SELECT * FROM chemical_dosing ORDER BY createTime DESC LIMIT 1').get();
   const summary = ['carbonSource','glucose','pac','anionPam','cationPam','naclo'].map(ck => {
-    const records = (db.chemical_inventory || []).filter(r => r.chemicalType === ck);
+    const records = invRecords.filter(r => r.chemicalType === ck);
     const totalIn = records.filter(r => r.type === 'in').reduce((s, r) => s + (Number(r.quantity) || 0), 0);
     const totalOut = records.filter(r => r.type === 'out').reduce((s, r) => s + (Number(r.quantity) || 0), 0);
     const totalUse = records.filter(r => r.type === 'use').reduce((s, r) => s + (Number(r.quantity) || 0), 0);
     const todayUse = records.filter(r => r.type === 'use' && r.date === new Date().toISOString().slice(0, 10)).reduce((s, r) => s + (Number(r.quantity) || 0), 0);
     const balance = totalIn - totalOut - totalUse;
-    const recentDosing = (db.chemical_dosing || []).sort((a, b) => new Date(b.createTime || 0) - new Date(a.createTime || 0))[0];
     return {
       key: ck, name: typeNames[ck], totalIn, totalOut, totalUse, balance, todayUse,
       lastDosing: recentDosing ? (recentDosing[ck] || 0) : 0,
@@ -932,10 +1161,9 @@ app.get('/api/inventory/summary', authMiddleware, (req, res) => {
 });
 
 app.get('/api/inventory/low-stock', authMiddleware, (req, res) => {
-  const db = loadDB();
   const typeNames = { carbonSource: '碳源', glucose: '葡萄糖', pac: 'PAC', anionPam: '阴离子PAM', cationPam: '阳离子PAM', naclo: '次氯酸钠' };
   const low = ['carbonSource','glucose','pac','anionPam','cationPam','naclo'].map(ck => {
-    const balance = getCurrentStock(ck, db);
+    const balance = getCurrentStock(ck);
     return { key: ck, name: typeNames[ck], balance, status: balance < 100 ? 'danger' : balance < 500 ? 'warning' : 'normal' };
   }).filter(s => s.balance < 500);
   res.json(low);
@@ -945,9 +1173,9 @@ app.get('/api/inventory/low-stock', authMiddleware, (req, res) => {
 app.get('/api/export/:table', authMiddleware, async (req, res) => {
   try {
     const exceljs = require('exceljs');
-    const db = loadDB();
     const table = req.params.table;
-    let data = db[table] || [];
+    if (!ALL_TABLES.includes(table)) return res.status(404).json({ error: '表不存在' });
+    let data = selectAll(table);
     if (req.query.dateFrom && req.query.dateTo) {
       data = data.filter(r => r.date >= req.query.dateFrom && r.date <= req.query.dateTo);
     }
@@ -965,9 +1193,7 @@ app.get('/api/export/:table', authMiddleware, async (req, res) => {
     }
 
     // 记录导出日志
-    db.exportLog = db.exportLog || [];
-    db.exportLog.push({ id: 'exp_' + Date.now(), table, count: data.length, operator: req.user.name, time: new Date().toISOString() });
-    saveDB(db);
+    insertRow('exportLog', { id: 'exp_' + Date.now(), table: table, count: String(data.length), operator: req.user.name, time: new Date().toISOString() });
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename=' + table + '_' + new Date().toISOString().slice(0, 10) + '.xlsx');
@@ -980,12 +1206,11 @@ app.get('/api/export/:table', authMiddleware, async (req, res) => {
 
 // ==================== 数据分析 ====================
 app.get('/api/analysis/fluctuation', authMiddleware, (req, res) => {
-  const db = loadDB();
   const range = parseInt(req.query.range) || 7;
   const startDate = new Date(); startDate.setDate(startDate.getDate() - range);
   const startStr = startDate.toISOString().slice(0, 10);
 
-  const hourlyData = (db.hourly_water || []).filter(r => r.date >= startStr);
+  const hourlyData = db.prepare('SELECT * FROM hourly_water WHERE date >= ?').all(startStr);
   const analysis = { waterQuality: { cod: [], nh3: [], tn: [], tp: [] }, alerts: [] };
 
   if (hourlyData.length >= 2) {
@@ -996,18 +1221,18 @@ app.get('/api/analysis/fluctuation', authMiddleware, (req, res) => {
 
     const analyzeMetric = (name, vals, limit) => {
       if (vals.length < 3) return { name, avg: vals[0], trend: '数据不足' };
-      const avg = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100;
+      const avgVal = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100;
       const max = Math.max(...vals);
       const min = Math.min(...vals);
       const recent = vals.slice(-Math.min(5, vals.length));
       const recentAvg = Math.round(recent.reduce((a, b) => a + b, 0) / recent.length * 100) / 100;
-      const trend = recentAvg > avg * 1.1 ? '上升' : recentAvg < avg * 0.9 ? '下降' : '稳定';
-      let analysis = '';
-      if (max > limit) analysis = '⚠️ 最大值(' + max + 'mg/L)超出标准限值(' + limit + 'mg/L)，需关注';
-      else if (trend === '上升' && recentAvg > limit * 0.8) analysis = '📈 近期呈上升趋势，接近限值，建议排查原因';
-      else if (trend === '下降') analysis = '📉 近期呈下降趋势，处理效果改善';
-      else analysis = '✅ 指标稳定，在正常范围内';
-      return { name, avg, max, min, recentAvg, trend, analysis, limit };
+      const trendVal = recentAvg > avgVal * 1.1 ? '上升' : recentAvg < avgVal * 0.9 ? '下降' : '稳定';
+      let analysisResult = '';
+      if (max > limit) analysisResult = '⚠️ 最大值(' + max + 'mg/L)超出标准限值(' + limit + 'mg/L)，需关注';
+      else if (trendVal === '上升' && recentAvg > limit * 0.8) analysisResult = '📈 近期呈上升趋势，接近限值，建议排查原因';
+      else if (trendVal === '下降') analysisResult = '📉 近期呈下降趋势，处理效果改善';
+      else analysisResult = '✅ 指标稳定，在正常范围内';
+      return { name, avg: avgVal, max, min, recentAvg, trend: trendVal, analysis: analysisResult, limit };
     };
 
     analysis.waterQuality.cod = analyzeMetric('COD', outCodVals, 50);
@@ -1019,14 +1244,13 @@ app.get('/api/analysis/fluctuation', authMiddleware, (req, res) => {
   res.json(analysis);
 });
 
-// ==================== 污泥指标综合分析 (SV30/MLSS/SVI/镜检) ====================
+// ==================== 污泥指标综合分析 ====================
 app.get('/api/sludge/analysis', authMiddleware, (req, res) => {
-  const db = loadDB();
   const range = parseInt(req.query.range) || 30;
   const startDate = new Date(); startDate.setDate(startDate.getDate() - range);
   const startStr = startDate.toISOString().slice(0, 10);
 
-  const labData = (db.daily_lab || []).filter(r => r.date >= startStr).sort((a, b) => a.date.localeCompare(b.date));
+  const labData = db.prepare('SELECT * FROM daily_lab WHERE date >= ? ORDER BY date ASC').all(startStr);
 
   // SV30 分析
   const sv30Vals = labData.filter(r => r.sv30).map(r => ({ date: r.date, value: Number(r.sv30) }));
@@ -1056,7 +1280,6 @@ app.get('/api/sludge/analysis', authMiddleware, (req, res) => {
   const mlssAnomalyDays = mlssVals.filter(v => v.value < 2000 || v.value > 6000);
 
   // SVI/SV30/MLSS 关系分析
-  // SVI = SV30 * 10000 / MLSS
   const calculatedSVI = labData.filter(r => r.sv30 && r.mlss).map(r => ({
     date: r.date,
     sv30: Number(r.sv30),
@@ -1147,8 +1370,7 @@ app.get('/api/sludge/qa', authMiddleware, (req, res) => {
   const question = (req.query.q || '').trim();
   if (!question) return res.status(400).json({ error: '请输入问题' });
 
-  const db = loadDB();
-  const labData = (db.daily_lab || []).sort((a, b) => a.date.localeCompare(b.date));
+  const labData = db.prepare('SELECT * FROM daily_lab ORDER BY date ASC').all();
   const recent7 = labData.slice(-7);
   const recent30 = labData.slice(-30);
 
@@ -1158,51 +1380,51 @@ app.get('/api/sludge/qa', authMiddleware, (req, res) => {
   // SV30相关
   if (/sv30|沉降比|污泥沉降/i.test(question)) {
     const vals = labData.filter(r => r.sv30).map(r => ({ date: r.date, value: Number(r.sv30) }));
-    const avg = vals.length > 0 ? Math.round(vals.reduce((s, v) => s + v.value, 0) / vals.length * 10) / 10 : null;
+    const avgVal = vals.length > 0 ? Math.round(vals.reduce((s, v) => s + v.value, 0) / vals.length * 10) / 10 : null;
     const max = vals.length > 0 ? Math.max(...vals.map(v => v.value)) : null;
     const min = vals.length > 0 ? Math.min(...vals.map(v => v.value)) : null;
     const recent = vals.slice(-5);
-    const trend = recent.length >= 3 ? (recent[recent.length-1].value > recent[0].value * 1.05 ? '上升' : recent[recent.length-1].value < recent[0].value * 0.95 ? '下降' : '稳定') : '未知';
+    const trendVal = recent.length >= 3 ? (recent[recent.length-1].value > recent[0].value * 1.05 ? '上升' : recent[recent.length-1].value < recent[0].value * 0.95 ? '下降' : '稳定') : '未知';
 
     if (/趋势|变化|走向/.test(question)) {
-      answer = '近30天SV30呈' + trend + '趋势。平均' + avg + '%，最高' + max + '%，最低' + min + '%。' + (avg > 35 ? '当前均值偏高，需关注污泥膨胀风险。' : avg < 15 ? '当前均值偏低，可能存在污泥老化。' : '在正常范围内(15-35%)。');
+      answer = '近30天SV30呈' + trendVal + '趋势。平均' + avgVal + '%，最高' + max + '%，最低' + min + '%。' + (avgVal > 35 ? '当前均值偏高，需关注污泥膨胀风险。' : avgVal < 15 ? '当前均值偏低，可能存在污泥老化。' : '在正常范围内(15-35%)。');
     } else if (/超标|异常|不正常/.test(question)) {
       const abnormal = vals.filter(v => v.value < 15 || v.value > 35);
       answer = '近30天共有' + abnormal.length + '天SV30异常（正常区间15%-35%）。' + (abnormal.length > 0 ? '异常日期：' + abnormal.map(v => v.date + '(' + v.value + '%)').join('、') : '未发现异常数据。');
     } else if (/最高|最大|最低|最小/.test(question)) {
-      answer = '近30天SV30最高' + max + '%（' + (vals.find(v => v.value === max) || {}).date + '），最低' + min + '%（' + (vals.find(v => v.value === min) || {}).date + '），平均值' + avg + '%。';
+      answer = '近30天SV30最高' + max + '%（' + (vals.find(v => v.value === max) || {}).date + '），最低' + min + '%（' + (vals.find(v => v.value === min) || {}).date + '），平均值' + avgVal + '%。';
     } else {
-      answer = '近30天SV30范围' + min + '% - ' + max + '%，平均值' + avg + '%，趋势' + trend + '。（正常区间：15%-35%）';
+      answer = '近30天SV30范围' + min + '% - ' + max + '%，平均值' + avgVal + '%，趋势' + trendVal + '。（正常区间：15%-35%）';
     }
     dataPoints = vals;
   }
   // SVI相关
   else if (/svi|污泥指数|体积指数/i.test(question)) {
     const vals = labData.filter(r => r.svi).map(r => ({ date: r.date, value: Number(r.svi) }));
-    const avg = vals.length > 0 ? Math.round(vals.reduce((s, v) => s + v.value, 0) / vals.length * 10) / 10 : null;
+    const avgVal = vals.length > 0 ? Math.round(vals.reduce((s, v) => s + v.value, 0) / vals.length * 10) / 10 : null;
     const max = vals.length > 0 ? Math.max(...vals.map(v => v.value)) : null;
     const min = vals.length > 0 ? Math.min(...vals.map(v => v.value)) : null;
     const recent = vals.slice(-5);
-    const trend = recent.length >= 3 ? (recent[recent.length-1].value > recent[0].value * 1.05 ? '上升' : recent[recent.length-1].value < recent[0].value * 0.95 ? '下降' : '稳定') : '未知';
+    const trendVal = recent.length >= 3 ? (recent[recent.length-1].value > recent[0].value * 1.05 ? '上升' : recent[recent.length-1].value < recent[0].value * 0.95 ? '下降' : '稳定') : '未知';
 
     if (/膨胀/.test(question)) {
       const highDays = vals.filter(v => v.value > 150);
       answer = '近30天SVI超过150mL/g（污泥膨胀风险阈值）共' + highDays.length + '天。' + (highDays.length > 0 ? '具体日期：' + highDays.map(v => v.date + '(' + v.value + 'mL/g)').join('、') + '。建议检查丝状菌丰度、调控污泥龄和曝气量。' : '未检测到污泥膨胀风险。');
     } else if (/趋势|变化/.test(question)) {
-      answer = '近30天SVI呈' + trend + '趋势，平均' + avg + 'mL/g。' + (avg > 150 ? '⚠️ 当前SVI偏高(>150)，存在污泥膨胀风险，建议紧急处理。' : avg > 130 ? '⚠️ SVI接近警戒值，需加强监控。' : avg > 50 ? 'SVI在正常范围(50-150mL/g)内，沉降性能良好。' : 'SVI偏低(<50)，污泥矿化度高。');
+      answer = '近30天SVI呈' + trendVal + '趋势，平均' + avgVal + 'mL/g。' + (avgVal > 150 ? '⚠️ 当前SVI偏高(>150)，存在污泥膨胀风险，建议紧急处理。' : avgVal > 130 ? '⚠️ SVI接近警戒值，需加强监控。' : avgVal > 50 ? 'SVI在正常范围(50-150mL/g)内，沉降性能良好。' : 'SVI偏低(<50)，污泥矿化度高。');
     } else {
-      answer = '近30天SVI范围' + min + ' - ' + max + 'mL/g，平均值' + avg + 'mL/g，趋势' + trend + '。（正常区间：50-150mL/g）';
+      answer = '近30天SVI范围' + min + ' - ' + max + 'mL/g，平均值' + avgVal + 'mL/g，趋势' + trendVal + '。（正常区间：50-150mL/g）';
     }
     dataPoints = vals;
   }
   // MLSS相关
   else if (/mlss|污泥浓度|悬浮固体/i.test(question)) {
     const vals = labData.filter(r => r.mlss).map(r => ({ date: r.date, value: Number(r.mlss) }));
-    const avg = vals.length > 0 ? Math.round(vals.reduce((s, v) => s + v.value, 0) / vals.length * 10) / 10 : null;
+    const avgVal = vals.length > 0 ? Math.round(vals.reduce((s, v) => s + v.value, 0) / vals.length * 10) / 10 : null;
     const max = vals.length > 0 ? Math.max(...vals.map(v => v.value)) : null;
     const min = vals.length > 0 ? Math.min(...vals.map(v => v.value)) : null;
     const recent = vals.slice(-5);
-    const trend = recent.length >= 3 ? (recent[recent.length-1].value > recent[0].value * 1.05 ? '上升' : recent[recent.length-1].value < recent[0].value * 0.95 ? '下降' : '稳定') : '未知';
+    const trendVal = recent.length >= 3 ? (recent[recent.length-1].value > recent[0].value * 1.05 ? '上升' : recent[recent.length-1].value < recent[0].value * 0.95 ? '下降' : '稳定') : '未知';
 
     if (/偏低|不足|不够/.test(question)) {
       const lowDays = vals.filter(v => v.value < 2000);
@@ -1211,7 +1433,7 @@ app.get('/api/sludge/qa', authMiddleware, (req, res) => {
       const highDays = vals.filter(v => v.value > 6000);
       answer = '近30天MLSS超过6000mg/L共' + highDays.length + '天。建议适当增加排泥量，控制污泥龄。';
     } else {
-      answer = '近30天MLSS范围' + min + ' - ' + max + 'mg/L，平均值' + avg + 'mg/L，趋势' + trend + '。（正常区间：2000-6000mg/L）';
+      answer = '近30天MLSS范围' + min + ' - ' + max + 'mg/L，平均值' + avgVal + 'mg/L，趋势' + trendVal + '。（正常区间：2000-6000mg/L）';
     }
     dataPoints = vals;
   }
@@ -1273,7 +1495,7 @@ app.get('/api/sludge/qa', authMiddleware, (req, res) => {
     answer = '近7天回流比记录：' + records.map(r => r.date + ' 内回流' + (r.internalReflux || '-') + '% 外回流' + (r.externalReflux || '-') + '%').join('；') + '。内回流影响脱氮效率，外回流影响污泥浓度和沉降性能。';
   }
   else {
-    // 通用回答：给出所有指标概览
+    // 通用回答
     const sv30Vals = labData.filter(r => r.sv30).map(r => Number(r.sv30));
     const sviVals = labData.filter(r => r.svi).map(r => Number(r.svi));
     const mlssVals = labData.filter(r => r.mlss).map(r => Number(r.mlss));
@@ -1292,8 +1514,14 @@ app.post('/api/seed', authMiddleware, (req, res) => {
   if (!req.userPermissions.canManage && !['厂长', '副厂长', '运营管理部'].includes(req.userRole)) {
     return res.status(403).json({ error: '无权限生成演示数据' });
   }
-  const db = loadDB();
   const counts = {};
+
+  // 清空现有数据
+  const clearTables = ['do_inspection','hourly_water','daily_lab','weekly_lab','sludge_special','dewatering','chemical_dosing','chemical_inventory','alerts','tasks'];
+  const clearAll = db.transaction(() => {
+    for (const t of clearTables) db.prepare('DELETE FROM [' + t + ']').run();
+  });
+  clearAll();
 
   // DO巡检（30天，每天东西两系列）
   const doData = [];
@@ -1316,7 +1544,8 @@ app.post('/api/seed', authMiddleware, (req, res) => {
       });
     });
   }
-  db.do_inspection = doData;
+  const insertDO = db.transaction((items) => { for (const r of items) insertRow('do_inspection', r); });
+  insertDO(doData);
   counts.inspection = doData.length;
 
   // 小时进出水（30天 × 24小时）
@@ -1335,7 +1564,8 @@ app.post('/api/seed', authMiddleware, (req, res) => {
       });
     }
   }
-  db.hourly_water = hourlyData;
+  const insertHourly = db.transaction((items) => { for (const r of items) insertRow('hourly_water', r); });
+  insertHourly(hourlyData);
   counts.hourly = hourlyData.length;
 
   // 每日化验（30天）
@@ -1352,7 +1582,8 @@ app.post('/api/seed', authMiddleware, (req, res) => {
       createTime: dateStr + 'T10:00:00.000Z',
     });
   }
-  db.daily_lab = dailyLabData;
+  const insertLab = db.transaction((items) => { for (const r of items) insertRow('daily_lab', r); });
+  insertLab(dailyLabData);
   counts.lab = dailyLabData.length;
 
   // 每周化验（4周）
@@ -1367,7 +1598,8 @@ app.post('/api/seed', authMiddleware, (req, res) => {
       createTime: end.toISOString().slice(0, 10) + 'T10:00:00.000Z',
     });
   }
-  db.weekly_lab = weeklyLabData;
+  const insertWeekly = db.transaction((items) => { for (const r of items) insertRow('weekly_lab', r); });
+  insertWeekly(weeklyLabData);
   counts.weeklyLab = weeklyLabData.length;
 
   // 污泥专项（10条）
@@ -1380,7 +1612,8 @@ app.post('/api/seed', authMiddleware, (req, res) => {
       createTime: d.toISOString(),
     });
   }
-  db.sludge_special = sludgeData;
+  const insertSludge = db.transaction((items) => { for (const r of items) insertRow('sludge_special', r); });
+  insertSludge(sludgeData);
   counts.sludge = sludgeData.length;
 
   // 脱泥（30天）
@@ -1398,7 +1631,8 @@ app.post('/api/seed', authMiddleware, (req, res) => {
       createTime: dateStr + 'T17:00:00.000Z',
     });
   }
-  db.dewatering = dewaterData;
+  const insertDewater = db.transaction((items) => { for (const r of items) insertRow('dewatering', r); });
+  insertDewater(dewaterData);
   counts.dewatering = dewaterData.length;
 
   // 药剂投加（30天）
@@ -1417,7 +1651,8 @@ app.post('/api/seed', authMiddleware, (req, res) => {
       });
     });
   }
-  db.chemical_dosing = dosingData;
+  const insertDosing = db.transaction((items) => { for (const r of items) insertRow('chemical_dosing', r); });
+  insertDosing(dosingData);
   counts.dosing = dosingData.length;
 
   // 药剂库存（初始入库 + 每日消耗出库）
@@ -1446,22 +1681,25 @@ app.post('/api/seed', authMiddleware, (req, res) => {
       invData.push({ id: 'inv_' + c.key + '_restock', date: new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10), operator: '卫班组3B', chemicalType: c.key, type: 'in', quantity: round1(restock), balance: round1(balance), supplier: '化工供应商B', batchNo: 'BN20260528', remark: '补充采购', createTime: new Date(Date.now() - 3 * 86400000).toISOString() });
     }
   });
-  db.chemical_inventory = invData;
+  const insertInv = db.transaction((items) => { for (const r of items) insertRow('chemical_inventory', r); });
+  insertInv(invData);
   counts.inventory = invData.length;
 
   // 预警（基于生成数据自动检测）
-  db.alerts = [];
+  const alertData = [];
   doData.forEach(r => {
-    const checkDO = (val, pool) => { if (val && (Number(val) < 0.5 || Number(val) > 4.0)) { db.alerts.push({ id: 'alt_' + r.id + '_' + pool, time: r.createTime, type: 'DO异常', level: Number(val) < 0.5 ? 'high' : 'medium', source: 'DO巡检', title: r.series + '系列' + pool + ' DO=' + val + 'mg/L', detail: r.date + ' ' + r.shift + '（正常: 0.5-4.0mg/L）', status: Math.random() > 0.3 ? 'resolved' : 'active', resolvedBy: Math.random() > 0.3 ? '王运营主管' : '', resolvedTime: Math.random() > 0.3 ? new Date(new Date(r.createTime).getTime() + 3600000).toISOString() : '' }); } };
+    const checkDO = (val, pool) => { if (val && (Number(val) < 0.5 || Number(val) > 4.0)) { alertData.push({ id: 'alt_' + r.id + '_' + pool, time: r.createTime, type: 'DO异常', level: Number(val) < 0.5 ? 'high' : 'medium', source: 'DO巡检', title: r.series + '系列' + pool + ' DO=' + val + 'mg/L', detail: r.date + ' ' + r.shift + '（正常: 0.5-4.0mg/L）', status: Math.random() > 0.3 ? 'resolved' : 'active', resolvedBy: Math.random() > 0.3 ? '王运营主管' : '', resolvedTime: Math.random() > 0.3 ? new Date(new Date(r.createTime).getTime() + 3600000).toISOString() : '' }); } };
     checkDO(r.anaerobic, '厌氧池'); checkDO(r.anoxic, '缺氧池');
   });
   hourlyData.filter(r => Number(r.outCod) > 50).slice(0, 10).forEach(r => {
-    db.alerts.push({ id: 'alt_cod_' + r.id, time: r.createTime, type: '水质异常', level: 'high', source: '小时进出水', title: '出水COD超标: ' + r.outCod + 'mg/L', detail: r.date + ' ' + r.hour + ':00（标准: ≤50mg/L）', status: 'active' });
+    alertData.push({ id: 'alt_cod_' + r.id, time: r.createTime, type: '水质异常', level: 'high', source: '小时进出水', title: '出水COD超标: ' + r.outCod + 'mg/L', detail: r.date + ' ' + r.hour + ':00（标准: ≤50mg/L）', status: 'active' });
   });
-  counts.alerts = db.alerts.length;
+  const insertAlerts = db.transaction((items) => { for (const r of items) insertRow('alerts', r); });
+  insertAlerts(alertData);
+  counts.alerts = alertData.length;
 
   // 任务
-  db.tasks = [
+  const taskData = [
     { id: 't1', title: '巡检东西系列曝气池DO', type: '巡检', priority: '高', status: '待处理', assignedTo: '周班组1A', deadline: new Date().toISOString().slice(0, 10), remark: '每日例行巡检', createTime: new Date().toISOString() },
     { id: 't2', title: '完成今日进出水COD化验', type: '化验', priority: '高', status: '待处理', assignedTo: '杨化验员1', deadline: new Date().toISOString().slice(0, 10), remark: '每日检测', createTime: new Date().toISOString() },
     { id: 't3', title: '更换加药间PAC药剂', type: '设备', priority: '中', status: '待处理', assignedTo: '褚班组3A', deadline: new Date().toISOString().slice(0, 10), remark: '药剂量不足', createTime: new Date().toISOString() },
@@ -1471,9 +1709,10 @@ app.post('/api/seed', authMiddleware, (req, res) => {
     { id: 't7', title: '处理格栅间异常噪音', type: '督检', priority: '高', status: '待处理', assignedTo: '郑班组2A', deadline: new Date().toISOString().slice(0, 10), remark: '现场巡检发现', createTime: new Date().toISOString() },
     { id: 't8', title: '总氮出水数据排查', type: '化验', priority: '高', status: '待处理', assignedTo: '杨化验员1', deadline: new Date().toISOString().slice(0, 10), remark: '昨日出水总氮接近限值', createTime: new Date().toISOString() },
   ];
-  counts.tasks = db.tasks.length;
+  const insertTasks = db.transaction((items) => { for (const r of items) insertRow('tasks', r); });
+  insertTasks(taskData);
+  counts.tasks = taskData.length;
 
-  saveDB(db);
   res.json({ success: true, counts });
 });
 
@@ -1481,9 +1720,11 @@ function round1(v) { return Math.round(v * 10) / 10; }
 function round2(v) { return Math.round(v * 100) / 100; }
 
 // ==================== 启动服务 ====================
-app.listen(PORT, () => {
-  console.log('污水处理厂运行管理系统 v3.0');
-  console.log('本地访问: http://localhost:' + PORT);
-  console.log('登录账号: admin / admin123（厂长）');
-  console.log('已启用: 13张数据表 | 角色权限 | 智能加药 | 预警引擎 | Excel导出 | 趋势分析');
-});
+  app.listen(PORT, () => {
+    console.log('污水处理厂运行管理系统 v4.0 (' + dbType + ')');
+    console.log('本地访问: http://localhost:' + PORT);
+    console.log('数据库: ' + DB_PATH + ' (' + dbType + ')');
+    console.log('登录账号: admin / admin123（厂长）');
+    console.log('已启用: SQLite数据库 | ' + (dbType === 'better-sqlite3' ? 'WAL模式' : 'sql.js内存模式') + ' | 13张数据表 | 角色权限 | 智能加药 | 预警引擎 | Excel导出 | 趋势分析');
+  });
+} // end startServer()
