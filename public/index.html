@@ -55,6 +55,23 @@
     <div id="toastContainer"></div>
   </div>
 
+  <script src="/lib/chart.umd.min.js"></script>
+  <script>
+    // Chart.js 加载失败保护
+    if (typeof Chart === 'undefined') {
+      window.Chart = function() { console.warn('Chart.js 未加载，图表不可用'); return { destroy(){}, update(){} }; };
+    }
+    // 全局错误捕获 - 防止 JS 异常导致白屏
+    window.onerror = function(msg, url, line, col, err) {
+      console.error('全局错误:', msg, '行:', line);
+      var tc = document.getElementById('toastContainer');
+      if (tc) { var d = document.createElement('div'); d.className = 'toast error'; d.textContent = '页面错误: ' + msg; tc.appendChild(d); setTimeout(function(){ d.remove(); }, 5000); }
+      return true;
+    };
+    window.onunhandledrejection = function(e) {
+      console.error('未捕获的Promise错误:', e.reason);
+    };
+  </script>
   <script>
     // ==================== 全局状态 ====================
     const API = window.location.origin;
@@ -63,32 +80,53 @@
 
     // ==================== 初始化 ====================
     (async function init() {
-      const token = localStorage.getItem('sb_token');
-      const user = JSON.parse(localStorage.getItem('sb_user') || 'null');
-      if (!token || !user) { window.location.href = '/login.html'; return; }
-      currentUser = user;
-      currentPermissions = user.permissions || {};
+      try {
+        const token = localStorage.getItem('sb_token');
+        const userStr = localStorage.getItem('sb_user');
+        let user = null;
+        try { user = JSON.parse(userStr || 'null'); } catch(e) {}
+        if (!token || !user) { window.location.href = '/login.html'; return; }
+        currentUser = user;
+        currentPermissions = user.permissions || {};
 
-      // 设置 header
-      const roleCls = { '厂长': 'admin', '副厂长': 'admin', '运营管理部': 'ops', '技术管理部': 'tech', '文员': 'clerk', '运营班组': 'ops', '化验主管': 'tech', '化验员': 'tech' };
-      document.getElementById('headerName').textContent = user.name;
-      const badge = document.getElementById('headerRole');
-      badge.textContent = user.role;
-      badge.className = 'header-badge ' + (roleCls[user.role] || '');
+        // 验证 token 是否仍有效
+        try {
+          const verifyRes = await fetch(API + '/api/stats/summary', { headers: authHeaders() });
+          if (verifyRes.status === 401) {
+            localStorage.removeItem('sb_token');
+            localStorage.removeItem('sb_user');
+            window.location.href = '/login.html';
+            return;
+          }
+        } catch(e) {
+          // 网络不通也允许进入（离线模式）
+          console.warn('Token验证网络错误:', e);
+        }
 
-      // Tab 切换
-      document.querySelectorAll('.tab-item').forEach(btn => {
-        btn.addEventListener('click', function() { switchTab(this.dataset.tab); });
-      });
-      // Sidebar 切换
-      document.querySelectorAll('.sidebar-item').forEach(btn => {
-        btn.addEventListener('click', function() { switchTab(this.dataset.tab); });
-      });
+        // 设置 header
+        const roleCls = { '厂长': 'admin', '副厂长': 'admin', '运营管理部': 'ops', '技术管理部': 'tech', '文员': 'clerk', '运营班组': 'ops', '化验主管': 'tech', '化验员': 'tech' };
+        document.getElementById('headerName').textContent = user.name;
+        const badge = document.getElementById('headerRole');
+        badge.textContent = user.role;
+        badge.className = 'header-badge ' + (roleCls[user.role] || '');
 
-      // 加载首页
-      switchTab('home');
-      loadAlertBadge();
-      setInterval(loadAlertBadge, 60000);
+        // Tab 切换
+        document.querySelectorAll('.tab-item').forEach(btn => {
+          btn.addEventListener('click', function() { switchTab(this.dataset.tab); });
+        });
+        // Sidebar 切换
+        document.querySelectorAll('.sidebar-item').forEach(btn => {
+          btn.addEventListener('click', function() { switchTab(this.dataset.tab); });
+        });
+
+        // 加载首页
+        switchTab('home');
+        loadAlertBadge();
+        setInterval(loadAlertBadge, 60000);
+      } catch(e) {
+        console.error('初始化失败:', e);
+        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;"><h2>页面加载失败</h2><p>' + e.message + '</p><button onclick="localStorage.clear();location.href=\'/login.html\'" style="margin-top:16px;padding:8px 24px;cursor:pointer;">重新登录</button></div>';
+      }
     })();
 
     async function loadAlertBadge() {
@@ -501,7 +539,7 @@
 
     // 一键下载报表
     function downloadReport(table) {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('sb_token');
       if (!token) { toast('请先登录', 'error'); return; }
       const url = API + '/api/export/' + table + '?token=' + token;
       const a = document.createElement('a');
@@ -1539,6 +1577,5 @@
       window.location.href = '/login.html';
     }
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </body>
 </html>
