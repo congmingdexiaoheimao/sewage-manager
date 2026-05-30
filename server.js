@@ -520,26 +520,37 @@ function checkAlerts(table, record) {
   const newAlerts = [];
 
   if (table === 'hourly_water') {
-    if (record.outCod && Number(record.outCod) > 50) {
-      newAlerts.push({ id: 'alt_' + Date.now() + '_cod', time: now, type: '水质异常', level: 'high', source: '小时进出水', title: '出水COD超标: ' + record.outCod + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水COD=' + record.outCod + 'mg/L（一级A标准: ≤50mg/L）', status: 'active' });
+    // 天津市地方B标准（DB12/599-2015）
+    if (record.outCod && Number(record.outCod) > 40) {
+      newAlerts.push({ id: 'alt_' + Date.now() + '_cod', time: now, type: '水质异常', level: 'high', source: '小时进出水', title: '出水COD超标: ' + record.outCod + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水COD=' + record.outCod + 'mg/L（天津B标准: ≤40mg/L）', status: 'active' });
     }
     if (record.outNh3 && Number(record.outNh3) > 5) {
-      newAlerts.push({ id: 'alt_' + Date.now() + '_nh3', time: now, type: '水质异常', level: 'high', source: '小时进出水', title: '出水氨氮超标: ' + record.outNh3 + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水氨氮=' + record.outNh3 + 'mg/L（标准: ≤5mg/L）', status: 'active' });
+      newAlerts.push({ id: 'alt_' + Date.now() + '_nh3', time: now, type: '水质异常', level: 'high', source: '小时进出水', title: '出水氨氮超标: ' + record.outNh3 + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水氨氮=' + record.outNh3 + 'mg/L（天津B标准: ≤5mg/L，水温≤12℃时≤8mg/L）', status: 'active' });
     }
     if (record.outTn && Number(record.outTn) > 15) {
-      newAlerts.push({ id: 'alt_' + Date.now() + '_tn', time: now, type: '水质异常', level: 'medium', source: '小时进出水', title: '出水总氮超标: ' + record.outTn + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水总氮=' + record.outTn + 'mg/L（标准: ≤15mg/L）', status: 'active' });
+      newAlerts.push({ id: 'alt_' + Date.now() + '_tn', time: now, type: '水质异常', level: 'medium', source: '小时进出水', title: '出水总氮超标: ' + record.outTn + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水总氮=' + record.outTn + 'mg/L（天津B标准: ≤15mg/L）', status: 'active' });
     }
     if (record.outTp && Number(record.outTp) > 0.5) {
-      newAlerts.push({ id: 'alt_' + Date.now() + '_tp', time: now, type: '水质异常', level: 'medium', source: '小时进出水', title: '出水总磷超标: ' + record.outTp + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水总磷=' + record.outTp + 'mg/L（标准: ≤0.5mg/L）', status: 'active' });
+      newAlerts.push({ id: 'alt_' + Date.now() + '_tp', time: now, type: '水质异常', level: 'medium', source: '小时进出水', title: '出水总磷超标: ' + record.outTp + 'mg/L', detail: record.date + ' ' + record.hour + ':00 出水总磷=' + record.outTp + 'mg/L（天津B标准: ≤0.5mg/L）', status: 'active' });
     }
   }
 
   if (table === 'do_inspection') {
+    // 不同池的DO下限阈值（mg/L）：厌氧池 < 0.2 预警，缺氧池 < 0.5 预警，好氧池 < 1.0 预警
+    const doThresholds = {
+      '厌氧池': { low: 0.2, high: 0.8, lowLabel: '<0.2', normalRange: '0.2-0.8' },
+      '缺氧池': { low: 0.5, high: 1.5, lowLabel: '<0.5', normalRange: '0.5-1.5' },
+      '好氧池1': { low: 1.0, high: 4.0, lowLabel: '<1.0', normalRange: '1.0-4.0' },
+      '好氧池2': { low: 1.0, high: 4.0, lowLabel: '<1.0', normalRange: '1.0-4.0' },
+      '好氧池3': { low: 1.0, high: 4.0, lowLabel: '<1.0', normalRange: '1.0-4.0' },
+      '好氧池4': { low: 1.0, high: 4.0, lowLabel: '<1.0', normalRange: '1.0-4.0' },
+    };
     const checkDO = (val, pool) => {
       if (val !== undefined && val !== null && val !== '') {
         const v = Number(val);
-        if (v < 0.5) newAlerts.push({ id: 'alt_' + Date.now() + '_do_low_' + pool, time: now, type: 'DO异常', level: 'high', source: 'DO巡检', title: pool + '溶解氧过低: ' + v + 'mg/L', detail: record.date + ' ' + record.series + '系列 ' + pool + ' DO=' + v + 'mg/L（正常: 0.5-4.0mg/L）', status: 'active' });
-        if (v > 4.0) newAlerts.push({ id: 'alt_' + Date.now() + '_do_high_' + pool, time: now, type: 'DO异常', level: 'medium', source: 'DO巡检', title: pool + '溶解氧过高: ' + v + 'mg/L', detail: record.date + ' ' + record.series + '系列 ' + pool + ' DO=' + v + 'mg/L（正常: 0.5-4.0mg/L）', status: 'active' });
+        const th = doThresholds[pool] || { low: 0.5, high: 4.0, normalRange: '0.5-4.0' };
+        if (v < th.low) newAlerts.push({ id: 'alt_' + Date.now() + '_do_low_' + pool, time: now, type: 'DO异常', level: 'high', source: 'DO巡检', title: pool + '溶解氧过低: ' + v + 'mg/L', detail: record.date + ' ' + record.series + '系列 ' + pool + ' DO=' + v + 'mg/L（正常: ' + th.normalRange + 'mg/L）', status: 'active' });
+        if (v > th.high) newAlerts.push({ id: 'alt_' + Date.now() + '_do_high_' + pool, time: now, type: 'DO异常', level: 'medium', source: 'DO巡检', title: pool + '溶解氧过高: ' + v + 'mg/L', detail: record.date + ' ' + record.series + '系列 ' + pool + ' DO=' + v + 'mg/L（正常: ' + th.normalRange + 'mg/L）', status: 'active' });
       }
     };
     checkDO(record.anaerobic, '厌氧池'); checkDO(record.anoxic, '缺氧池');
@@ -1529,7 +1540,7 @@ app.post('/api/seed', authMiddleware, (req, res) => {
     const d = new Date(); d.setDate(d.getDate() - i);
     const dateStr = d.toISOString().slice(0, 10);
     ['east', 'west'].forEach(series => {
-      ['早班', '中班'].forEach(shift => {
+      ['白班', '晚班'].forEach(shift => {
         doData.push({
           id: 'do_' + dateStr + '_' + series + '_' + shift,
           date: dateStr, shift, series, operator: series === 'east' ? '周班组1A' : '吴班组1B',
@@ -1647,7 +1658,7 @@ app.post('/api/seed', authMiddleware, (req, res) => {
         carbonSource: round1(50 + Math.random() * 100), glucose: round1(10 + Math.random() * 30),
         pac: round1(5 + Math.random() * 20), anionPam: round1(0.5 + Math.random() * 2),
         cationPam: round1(0.3 + Math.random() * 1), naclo: round1(2 + Math.random() * 8),
-        createTime: dateStr + 'T' + (shift === '早班' ? '08' : '20') + ':00:00.000Z',
+        createTime: dateStr + 'T' + (shift === '白班' ? '08' : '20') + ':00:00.000Z',
       });
     });
   }

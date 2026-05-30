@@ -265,11 +265,11 @@
           fields: [
             { section: '基本信息' },
             { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
-            { name: 'shift', label: '班次', type: 'select', options: ['早班','中班','晚班'], required: true },
+            { name: 'shift', label: '班次', type: 'select', options: ['白班','晚班'], required: true },
             { name: 'series', label: '系列', type: 'select', options: ['east','west'], labels: ['东系列','西系列'], required: true },
             { section: '溶解氧数值 (mg/L)' },
-            { name: 'anaerobic', label: '厌氧池 DO', type: 'number', step: '0.01', placeholder: '0.10-0.50' },
-            { name: 'anoxic', label: '缺氧池 DO', type: 'number', step: '0.01', placeholder: '0.30-1.00' },
+            { name: 'anaerobic', label: '厌氧池 DO', type: 'number', step: '0.01', placeholder: '<0.20预警' },
+            { name: 'anoxic', label: '缺氧池 DO', type: 'number', step: '0.01', placeholder: '<0.50预警' },
             { name: 'aerobic1', label: '好氧池1 DO', type: 'number', step: '0.01', placeholder: '1.50-3.00' },
             { name: 'aerobic2', label: '好氧池2 DO', type: 'number', step: '0.01', placeholder: '1.50-3.00' },
             { name: 'aerobic3', label: '好氧池3 DO', type: 'number', step: '0.01', placeholder: '2.00-3.50' },
@@ -364,7 +364,7 @@
           title: '药剂投加记录',
           fields: [
             { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
-            { name: 'shift', label: '班次', type: 'select', options: ['早班','中班','晚班'], required: true },
+            { name: 'shift', label: '班次', type: 'select', options: ['白班','晚班'], required: true },
             { section: '投加量 (kg)' },
             { name: 'carbonSource', label: '碳源 (kg)', type: 'number', step: '0.1' },
             { name: 'glucose', label: '葡萄糖 (kg)', type: 'number', step: '0.1' },
