@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>污水处理厂运行管理系统</title>
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
   <div class="app-shell">
@@ -18,7 +18,7 @@
         <button class="sidebar-item" data-tab="tools"><span class="si-icon">⚙️</span>智能工具</button>
         <button class="sidebar-item" data-tab="me"><span class="si-icon">👤</span>个人中心</button>
       </nav>
-      <div class="sidebar-footer">v4.3 智慧水务</div>
+      <div class="sidebar-footer">v4.4 智慧水务</div>
     </div>
 
     <!-- Header -->
@@ -242,6 +242,7 @@
         html += '<div class="fill-entry" onclick="openFillForm(\'chemical_dosing\')"><div class="fe-icon">🧪</div><div class="fe-title">药剂投加</div><div class="fe-count">6种药剂记录</div></div>';
         html += '<div class="fill-entry" onclick="openFillForm(\'chemical_inventory\')"><div class="fe-icon">📦</div><div class="fe-title">药剂出入库</div><div class="fe-count">库存管理</div></div>';
         html += '<div class="fill-entry" onclick="openFillForm(\'dewatering\')"><div class="fe-icon">🔄</div><div class="fe-title">脱泥生产</div><div class="fe-count">运行记录</div></div>';
+        html += '<div class="fill-entry" onclick="openFillForm(\'daily_summary\')"><div class="fe-icon">📊</div><div class="fe-title">每日报表</div><div class="fe-count">电量/水量汇总</div></div>';
       }
 
       if (isLab) {
@@ -266,7 +267,7 @@
           fields: [
             { section: '基本信息' },
             { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
-            { name: 'shift', label: '班次', type: 'select', options: ['白班','晚班'], required: true },
+            { name: 'shift', label: '班次', type: 'select', options: ['早班','中班','晚班'], required: true },
             { name: 'series', label: '系列', type: 'select', options: ['east','west'], labels: ['东系列','西系列'], required: true },
             { section: '溶解氧数值 (mg/L)' },
             { name: 'anaerobic', label: '厌氧池 DO', type: 'number', step: '0.01', placeholder: '<0.20预警' },
@@ -365,7 +366,7 @@
           title: '药剂投加记录',
           fields: [
             { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
-            { name: 'shift', label: '班次', type: 'select', options: ['白班','晚班'], required: true },
+            { name: 'shift', label: '班次', type: 'select', options: ['早班','中班','晚班'], required: true },
             { section: '投加量 (kg)' },
             { name: 'carbonSource', label: '碳源 (kg)', type: 'number', step: '0.1' },
             { name: 'glucose', label: '葡萄糖 (kg)', type: 'number', step: '0.1' },
@@ -385,6 +386,26 @@
             { name: 'supplier', label: '供应商', type: 'text' },
             { name: 'batchNo', label: '批号', type: 'text' },
             { name: 'remark', label: '备注', type: 'textarea' },
+          ]
+        },
+        daily_summary: {
+          title: '每日报表',
+          fields: [
+            { section: '基本信息' },
+            { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
+            { section: '运行数据' },
+            { name: 'electricity', label: '日用电量 (kWh)', type: 'number', step: '1', placeholder: '如：3500' },
+            { name: 'inFlowTotal', label: '日进水量 (m³)', type: 'number', step: '1', placeholder: '如：10000' },
+            { name: 'outFlowTotal', label: '日出水量 (m³)', type: 'number', step: '1', placeholder: '如：9500' },
+            { name: 'sludgeOutput', label: '日污泥产量 (吨)', type: 'number', step: '0.1', placeholder: '如：15.5' },
+            { section: '去除率 (%)' },
+            { name: 'codRemoval', label: 'COD去除率 (%)', type: 'number', step: '0.1', placeholder: '如：92.5' },
+            { name: 'nh3Removal', label: '氨氮去除率 (%)', type: 'number', step: '0.1', placeholder: '如：95.0' },
+            { name: 'tnRemoval', label: '总氮去除率 (%)', type: 'number', step: '0.1', placeholder: '如：70.0' },
+            { name: 'tpRemoval', label: '总磷去除率 (%)', type: 'number', step: '0.1', placeholder: '如：90.0' },
+            { section: '其他' },
+            { name: 'runStatus', label: '运行状态', type: 'select', options: ['正常运行','设备检修','异常停机'], required: true },
+            { name: 'remark', label: '备注', type: 'textarea', placeholder: '特殊情况说明...' },
           ]
         }
       };
@@ -443,6 +464,7 @@
       // 中部：数据表格入口
       html += '<div class="card mb-12"><div class="card-header"><h3>📋 数据表格</h3></div><div class="card-body"><div class="fill-grid">';
       const tables = [
+        { key: 'daily_summary', name: '每日报表', icon: '📊' },
         { key: 'do_inspection', name: 'DO巡检', icon: '🔍' },
         { key: 'hourly_water', name: '小时进出水', icon: '💧' },
         { key: 'daily_lab', name: '每日化验', icon: '🧫' },
@@ -464,7 +486,31 @@
       html += '<button class="quick-action" onclick="openSludgeQA()"><span class="qa-icon">💬</span>数据问答</button>';
       html += '</div></div></div>';
 
+      // 每日报表下载
+      html += '<div class="card"><div class="card-header"><h3>📥 报表下载</h3></div><div class="card-body"><div class="quick-actions">';
+      html += '<button class="quick-action" onclick="downloadReport(\'daily_summary\')"><span class="qa-icon">📊</span>每日报表</button>';
+      html += '<button class="quick-action" onclick="downloadReport(\'do_inspection\')"><span class="qa-icon">🔍</span>DO巡检</button>';
+      html += '<button class="quick-action" onclick="downloadReport(\'hourly_water\')"><span class="qa-icon">💧</span>进出水数据</button>';
+      html += '<button class="quick-action" onclick="downloadReport(\'daily_lab\')"><span class="qa-icon">🧫</span>每日化验</button>';
+      html += '<button class="quick-action" onclick="downloadReport(\'chemical_dosing\')"><span class="qa-icon">🧪</span>药剂投加</button>';
+      html += '<button class="quick-action" onclick="downloadReport(\'dewatering\')"><span class="qa-icon">🔄</span>脱泥生产</button>';
+      html += '</div></div></div>';
+
       page.innerHTML = html;
+    }
+
+    // 一键下载报表
+    function downloadReport(table) {
+      const token = localStorage.getItem('token');
+      if (!token) { toast('请先登录', 'error'); return; }
+      const url = API + '/api/export/' + table + '?token=' + token;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = table + '_' + new Date().toISOString().slice(0,10) + '.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      toast('正在下载 ' + table + ' 报表...', 'success');
     }
 
     async function openDataView(table, name) {
@@ -495,6 +541,7 @@
               else if (k === 'status' && table === 'users') { if (v === 'active') v = '✅启用'; else v = '❌禁用'; }
               else if (k === 'chemicalType' && v) { const m = { carbonSource:'碳源', glucose:'葡萄糖', pac:'PAC', anionPam:'阴离子PAM', cationPam:'阳离子PAM', naclo:'次氯酸钠' }; v = m[v] || v; }
               else if (k === 'series' && v) { v = v === 'east' ? '东系列' : v === 'west' ? '西系列' : v; }
+              else if (k === 'runStatus' && v) { if (v === '正常运行') v = '✅正常运行'; else if (v === '设备检修') v = '🔧设备检修'; else if (v === '异常停机') v = '❌异常停机'; }
               html += '<td>' + (v !== undefined && v !== null ? String(v).slice(0, 40) : '-') + '</td>';
             });
             html += '</tr>';

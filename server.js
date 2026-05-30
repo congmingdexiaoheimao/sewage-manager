@@ -162,8 +162,8 @@ const ROLES = {
 // 角色可访问的表
 function getAccessibleTables(role) {
   const r = ROLES[role] || {};
-  if (r.canViewAll) return ['do_inspection','hourly_water','daily_lab','weekly_lab','sludge_special','dewatering','chemical_dosing','chemical_inventory','alerts','tasks','exportLog','users','daily','inspect','lab'];
-  if (r.fillOps || r.isOps) return ['do_inspection','hourly_water','dewatering','chemical_dosing','chemical_inventory','tasks','alerts'];
+  if (r.canViewAll) return ['do_inspection','hourly_water','daily_lab','weekly_lab','sludge_special','dewatering','chemical_dosing','chemical_inventory','daily_summary','alerts','tasks','exportLog','users','daily','inspect','lab'];
+  if (r.fillOps || r.isOps) return ['do_inspection','hourly_water','dewatering','chemical_dosing','chemical_inventory','daily_summary','tasks','alerts'];
   if (r.fillLab || r.reviewLab || r.isTech) return ['daily_lab','weekly_lab','sludge_special','tasks','alerts'];
   return ['tasks'];
 }
@@ -178,6 +178,7 @@ const CHINESE_FIELDS = {
   dewatering: { id:'编号', date:'日期', operator:'操作员', startTime:'开始时间', endTime:'结束时间', duration:'运行时长(h)', sludgeOutput:'污泥产量(吨)', abnormality:'异常备注', groupId:'班组', createTime:'创建时间', updateTime:'更新时间', updatedBy:'更新人' },
   chemical_dosing: { id:'编号', date:'日期', shift:'班次', operator:'操作员', carbonSource:'碳源(kg)', glucose:'葡萄糖(kg)', pac:'PAC(kg)', anionPam:'阴离子PAM(kg)', cationPam:'阳离子PAM(kg)', naclo:'次氯酸钠(kg)', groupId:'班组', createTime:'创建时间', updateTime:'更新时间', updatedBy:'更新人' },
   chemical_inventory: { id:'编号', date:'日期', operator:'操作员', chemicalType:'药剂类型', type:'操作类型', quantity:'数量(kg)', balance:'库存余额(kg)', supplier:'供应商', batchNo:'批号', remark:'备注', createTime:'创建时间', updateTime:'更新时间', updatedBy:'更新人' },
+  daily_summary: { id:'编号', date:'日期', operator:'填报人', electricity:'日用电量(kWh)', inFlowTotal:'日进水量(m³)', outFlowTotal:'日出水量(m³)', sludgeOutput:'日污泥产量(吨)', codRemoval:'COD去除率(%)', nh3Removal:'氨氮去除率(%)', tnRemoval:'总氮去除率(%)', tpRemoval:'总磷去除率(%)', runStatus:'运行状态', remark:'备注', groupId:'班组', createTime:'创建时间', updateTime:'更新时间', updatedBy:'更新人' },
   alerts: { id:'编号', time:'预警时间', type:'预警类型', level:'预警等级', source:'来源', title:'标题', detail:'详情', status:'状态', resolvedBy:'处理人', resolvedTime:'处理时间' },
   tasks: { id:'编号', title:'任务标题', type:'任务类型', priority:'优先级', status:'状态', assignedTo:'负责人', deadline:'截止日期', remark:'备注', createTime:'创建时间' },
   users: { id:'编号', username:'用户名', name:'姓名', role:'角色', phone:'手机号', groupId:'班组', status:'状态', createTime:'创建时间' },
@@ -185,7 +186,7 @@ const CHINESE_FIELDS = {
 };
 
 // ==================== 建表与迁移 ====================
-const ALL_TABLES = ['do_inspection','hourly_water','daily_lab','weekly_lab','sludge_special','dewatering','chemical_dosing','chemical_inventory','alerts','tasks','exportLog','users','daily','inspect','lab'];
+const ALL_TABLES = ['do_inspection','hourly_water','daily_lab','weekly_lab','sludge_special','dewatering','chemical_dosing','chemical_inventory','daily_summary','alerts','tasks','exportLog','users','daily','inspect','lab'];
 
 /** 所有表结构定义：表名 → 列定义字符串 */
 const TABLE_SCHEMAS = {
@@ -197,6 +198,7 @@ const TABLE_SCHEMAS = {
   dewatering: 'id TEXT PRIMARY KEY, date TEXT, operator TEXT, startTime TEXT, endTime TEXT, duration TEXT, sludgeOutput TEXT, abnormality TEXT, groupId TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
   chemical_dosing: 'id TEXT PRIMARY KEY, date TEXT, shift TEXT, operator TEXT, carbonSource TEXT, glucose TEXT, pac TEXT, anionPam TEXT, cationPam TEXT, naclo TEXT, groupId TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
   chemical_inventory: 'id TEXT PRIMARY KEY, date TEXT, operator TEXT, chemicalType TEXT, type TEXT, quantity TEXT, balance TEXT, supplier TEXT, batchNo TEXT, remark TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  daily_summary: 'id TEXT PRIMARY KEY, date TEXT, operator TEXT, electricity TEXT, inFlowTotal TEXT, outFlowTotal TEXT, sludgeOutput TEXT, codRemoval TEXT, nh3Removal TEXT, tnRemoval TEXT, tpRemoval TEXT, runStatus TEXT, remark TEXT, groupId TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
   alerts: 'id TEXT PRIMARY KEY, time TEXT, type TEXT, level TEXT, source TEXT, title TEXT, detail TEXT, status TEXT, resolvedBy TEXT, resolvedTime TEXT',
   tasks: 'id TEXT PRIMARY KEY, title TEXT, type TEXT, priority TEXT, status TEXT, assignedTo TEXT, deadline TEXT, remark TEXT, createTime TEXT',
   users: 'id TEXT PRIMARY KEY, username TEXT, name TEXT, role TEXT, phone TEXT, groupId TEXT, status TEXT, password TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
@@ -292,7 +294,7 @@ function initDB() {
     const doItems = [];
     for (let day = 29; day >= 0; day--) {
       const d = new Date(today); d.setDate(d.getDate() - day); const ds = d.toISOString().slice(0,10);
-      for (const shift of ['白班','晚班']) {
+      for (const shift of ['早班','中班','晚班']) {
         for (const series of ['east','west']) {
           doItems.push([
             'do_' + ds + '_' + shift + '_' + series, ds, shift, series, '系统', 
@@ -346,7 +348,7 @@ function initDB() {
     const cdItems = [];
     for (let day = 29; day >= 0; day--) {
       const d = new Date(today); d.setDate(d.getDate() - day); const ds = d.toISOString().slice(0,10);
-      for (const shift of ['白班','晚班']) {
+      for (const shift of ['早班','中班','晚班']) {
         cdItems.push([
           'cd_' + ds + '_' + shift, ds, shift, '系统',
           rand(150, 300, 1), rand(50, 100, 1), rand(80, 200, 1), rand(2, 8, 1), rand(3, 10, 1), rand(20, 60, 1),
@@ -386,6 +388,28 @@ function initDB() {
     }
     insertDWMany(dwItems);
     console.log('  生成 dewatering: ' + dwItems.length + ' 条');
+
+    // 7. 每日汇总 - 30天
+    const insertDS = db.prepare('INSERT OR IGNORE INTO daily_summary (id,date,operator,electricity,inFlowTotal,outFlowTotal,sludgeOutput,codRemoval,nh3Removal,tnRemoval,tpRemoval,runStatus,remark,groupId,createTime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+    const insertDSMany = db.transaction((items) => { for (const i of items) insertDS.run(...i); });
+    const dsItems = [];
+    for (let day = 29; day >= 0; day--) {
+      const d = new Date(today); d.setDate(d.getDate() - day); const ds = d.toISOString().slice(0,10);
+      dsItems.push([
+        'ds_' + ds, ds, '系统',
+        rand(2800, 4200, 0),   // 日用电量 kWh
+        rand(8000, 12000, 0),  // 日进水量 m³
+        rand(7500, 11500, 0),  // 日出水量 m³
+        rand(8, 20, 1),        // 日污泥产量 吨
+        rand(85, 95, 1),       // COD去除率 %
+        rand(88, 98, 1),       // 氨氮去除率 %
+        rand(60, 80, 1),       // 总氮去除率 %
+        rand(85, 96, 1),       // 总磷去除率 %
+        '正常运行', '', 'group1', now
+      ]);
+    }
+    insertDSMany(dsItems);
+    console.log('  生成 daily_summary: ' + dsItems.length + ' 条');
 
     console.log('模拟数据生成完成');
   }
@@ -443,7 +467,7 @@ app.get('/api/fields/:table', authMiddleware, (req, res) => {
 
 // ==================== 认证中间件 ====================
 function authMiddleware(req, res, next) {
-  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
   const session = sessions.get(token);
   if (!session || session.expires < Date.now()) {
     if (session) sessions.delete(token);

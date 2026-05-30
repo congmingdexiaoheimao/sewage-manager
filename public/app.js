@@ -193,7 +193,7 @@ async function renderDashboard(main) {
 function dailyFields() {
   return [
     { key: 'date', label: '日期', type: 'date', required: true },
-    { key: 'shift', label: '班次', type: 'select', options: ['白班(8:00-16:00)', '夜班(16:00-8:00)'], required: true },
+    { key: 'shift', label: '班次', type: 'select', options: ['早班(0:00-8:00)', '中班(8:00-16:00)', '晚班(16:00-24:00)'], required: true },
     { key: 'inflow', label: '进水量(m³)', type: 'number' },
     { key: 'outflow', label: '出水量(m³)', type: 'number' },
     { key: 'inCod', label: '进水COD(mg/L)', type: 'number' },
