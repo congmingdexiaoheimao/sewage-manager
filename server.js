@@ -277,6 +277,118 @@ function initDB() {
       ['u22', 'admin', '系统管理员', '厂长', '13900000000', '', 'active', 'admin123', now],
     ]);
   }
+
+  // 自动生成模拟数据（如果核心表为空且没有JSON文件）
+  const doCount = db.prepare('SELECT COUNT(*) as cnt FROM do_inspection').get().cnt;
+  if (doCount === 0 && !fs.existsSync(JSON_DB_FILE)) {
+    console.log('正在生成模拟数据...');
+    const now = new Date().toISOString();
+    const today = new Date();
+    const rand = (min, max, dec) => { const v = min + Math.random() * (max - min); return dec ? v.toFixed(dec) : Math.round(v).toString(); };
+
+    // 1. DO巡检 - 30天 x 2班次 x 2系列
+    const insertDO = db.prepare('INSERT OR IGNORE INTO do_inspection (id,date,shift,series,operator,anaerobic,anoxic,aerobic1,aerobic2,aerobic3,aerobic4,remark,groupId,createTime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+    const insertDOMany = db.transaction((items) => { for (const i of items) insertDO.run(...i); });
+    const doItems = [];
+    for (let day = 29; day >= 0; day--) {
+      const d = new Date(today); d.setDate(d.getDate() - day); const ds = d.toISOString().slice(0,10);
+      for (const shift of ['白班','晚班']) {
+        for (const series of ['east','west']) {
+          doItems.push([
+            'do_' + ds + '_' + shift + '_' + series, ds, shift, series, '系统', 
+            rand(0.1, 0.6, 2), rand(0.3, 1.2, 2), rand(1.5, 3.5, 2), rand(1.5, 3.5, 2), rand(2.0, 3.8, 2), rand(2.0, 3.8, 2),
+            '', 'group1', now
+          ]);
+        }
+      }
+    }
+    insertDOMany(doItems);
+    console.log('  生成 do_inspection: ' + doItems.length + ' 条');
+
+    // 2. 小时进出水 - 30天 x 24小时
+    const insertHW = db.prepare('INSERT OR IGNORE INTO hourly_water (id,date,hour,operator,inCod,inNh3,inTn,inTp,inFlow,inPh,outCod,outNh3,outTn,outTp,outFlow,outPh,groupId,createTime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+    const insertHWMany = db.transaction((items) => { for (const i of items) insertHW.run(...i); });
+    const hwItems = [];
+    for (let day = 29; day >= 0; day--) {
+      const d = new Date(today); d.setDate(d.getDate() - day); const ds = d.toISOString().slice(0,10);
+      for (let h = 0; h < 24; h++) {
+        hwItems.push([
+          'hw_' + ds + '_' + h, ds, h.toString(), '系统',
+          rand(180, 350, 1), rand(15, 40, 2), rand(25, 50, 2), rand(2, 6, 2), rand(350, 500, 0), rand(6.5, 7.5, 2),
+          rand(20, 50, 1), rand(1, 5, 2), rand(8, 15, 2), rand(0.2, 0.5, 2), rand(340, 480, 0), rand(6.8, 7.5, 2),
+          'group1', now
+        ]);
+      }
+    }
+    insertHWMany(hwItems);
+    console.log('  生成 hourly_water: ' + hwItems.length + ' 条');
+
+    // 3. 每日化验 - 30天
+    const insertDL = db.prepare('INSERT OR IGNORE INTO daily_lab (id,date,operator,reviewer,reviewStatus,ph,ss,bod5,cod,nh3,tn,tp,fecalColiform,sv30,svi,mlss,microscope,sv30East,sv30West,waterTempEast,waterTempWest,internalReflux,externalReflux,groupId,createTime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+    const insertDLMany = db.transaction((items) => { for (const i of items) insertDL.run(...i); });
+    const dlItems = [];
+    for (let day = 29; day >= 0; day--) {
+      const d = new Date(today); d.setDate(d.getDate() - day); const ds = d.toISOString().slice(0,10);
+      dlItems.push([
+        'dl_' + ds, ds, '系统', '系统', 'approved',
+        rand(6.8, 7.5, 2), rand(10, 30, 1), rand(5, 15, 1), rand(20, 45, 1), rand(0.5, 4, 2), rand(8, 14, 2), rand(0.2, 0.5, 2),
+        rand(1000, 5000, 0), rand(18, 32, 1), rand(80, 130, 1), rand(2500, 4000, 0), '菌胶团紧密，钟虫多',
+        rand(18, 32, 1), rand(18, 32, 1), rand(15, 25, 1), rand(15, 25, 1), rand(100, 300, 0), rand(50, 100, 0),
+        'group1', now
+      ]);
+    }
+    insertDLMany(dlItems);
+    console.log('  生成 daily_lab: ' + dlItems.length + ' 条');
+
+    // 4. 药剂投加 - 30天 x 2班次
+    const insertCD = db.prepare('INSERT OR IGNORE INTO chemical_dosing (id,date,shift,operator,carbonSource,glucose,pac,anionPam,cationPam,naclo,groupId,createTime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
+    const insertCDMany = db.transaction((items) => { for (const i of items) insertCD.run(...i); });
+    const cdItems = [];
+    for (let day = 29; day >= 0; day--) {
+      const d = new Date(today); d.setDate(d.getDate() - day); const ds = d.toISOString().slice(0,10);
+      for (const shift of ['白班','晚班']) {
+        cdItems.push([
+          'cd_' + ds + '_' + shift, ds, shift, '系统',
+          rand(150, 300, 1), rand(50, 100, 1), rand(80, 200, 1), rand(2, 8, 1), rand(3, 10, 1), rand(20, 60, 1),
+          'group1', now
+        ]);
+      }
+    }
+    insertCDMany(cdItems);
+    console.log('  生成 chemical_dosing: ' + cdItems.length + ' 条');
+
+    // 5. 药剂库存初始化
+    const insertCI = db.prepare('INSERT OR IGNORE INTO chemical_inventory (id,date,operator,chemicalType,type,quantity,balance,supplier,batchNo,remark,createTime) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+    const insertCIMany = db.transaction((items) => { for (const i of items) insertCI.run(...i); });
+    const ciItems = [];
+    const chems = [
+      { key: 'carbonSource', name: '碳源', stock: 5000 },
+      { key: 'glucose', name: '葡萄糖', stock: 2000 },
+      { key: 'pac', name: 'PAC', stock: 3000 },
+      { key: 'anionPam', name: '阴离子PAM', stock: 800 },
+      { key: 'cationPam', name: '阳离子PAM', stock: 600 },
+      { key: 'naclo', name: '次氯酸钠', stock: 1500 },
+    ];
+    const initDate = new Date(today); initDate.setDate(initDate.getDate() - 30);
+    chems.forEach(c => {
+      ciItems.push(['ci_init_' + c.key, initDate.toISOString().slice(0,10), '系统', c.key, 'in', c.stock.toString(), c.stock.toString(), '供应商A', 'B2026001', '初始库存', now]);
+    });
+    insertCIMany(ciItems);
+    console.log('  生成 chemical_inventory: ' + ciItems.length + ' 条');
+
+    // 6. 脱泥生产 - 30天
+    const insertDW = db.prepare('INSERT OR IGNORE INTO dewatering (id,date,operator,startTime,endTime,duration,sludgeOutput,abnormality,groupId,createTime) VALUES (?,?,?,?,?,?,?,?,?,?)');
+    const insertDWMany = db.transaction((items) => { for (const i of items) insertDW.run(...i); });
+    const dwItems = [];
+    for (let day = 29; day >= 0; day--) {
+      const d = new Date(today); d.setDate(d.getDate() - day); const ds = d.toISOString().slice(0,10);
+      dwItems.push(['dw_' + ds, ds, '系统', '08:00', '16:00', rand(6, 10, 1), rand(8, 20, 1), '', 'group1', now]);
+    }
+    insertDWMany(dwItems);
+    console.log('  生成 dewatering: ' + dwItems.length + ' 条');
+
+    console.log('模拟数据生成完成');
+  }
 }
 initDB();
 

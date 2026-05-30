@@ -269,6 +269,7 @@ tr:hover td { background: #fafafa; }
 
 /* ===== Dashboard Layout ===== */
 .dashboard-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.dashboard-top { display: flex; flex-direction: column; gap: 12px; }
 .dashboard-left { display: flex; flex-direction: column; gap: 12px; }
 .dashboard-right { display: flex; flex-direction: column; gap: 12px; }
 
@@ -289,13 +290,14 @@ tr:hover td { background: #fafafa; }
   .fill-entry { padding: 24px 16px; }
   .fill-entry .fe-icon { font-size: 32px; }
   .fill-entry .fe-title { font-size: 14px; }
-  .quick-actions { grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .quick-actions { grid-template-columns: repeat(3, 1fr); gap: 12px; }
   .quick-action { padding: 16px; font-size: 14px; }
   .card { margin-bottom: 16px; border-radius: 12px; }
   .card-header { padding: 16px 20px; }
   .card-header h3 { font-size: 16px; }
   .card-body { padding: 20px; }
-  .dashboard-grid { grid-template-columns: 2fr 1fr; gap: 16px; }
+  .dashboard-grid { grid-template-columns: 1fr 1fr; gap: 16px; }
+  .dashboard-top { grid-column: 1 / -1; }
   .modal-overlay { align-items: center; }
   .modal-content { width: 640px; max-height: 80vh; border-radius: 12px; }
   .dosing-result { grid-template-columns: repeat(3, 1fr); }
@@ -305,6 +307,6 @@ tr:hover td { background: #fafafa; }
 
 @media (min-width: 1024px) {
   .fill-grid { grid-template-columns: repeat(4, 1fr); }
-  .quick-actions { grid-template-columns: repeat(5, 1fr); }
-  .dashboard-grid { grid-template-columns: 3fr 1fr; }
+  .quick-actions { grid-template-columns: repeat(3, 1fr); }
+  .dashboard-grid { grid-template-columns: 1fr 1fr; }
 }
