@@ -1,0 +1,2 @@
+<!-- web-view 页面：嵌入完整的污水管理系统 -->
+<web-view src="{{url}}" bindload="onLoad" binderror="onError"></web-view>

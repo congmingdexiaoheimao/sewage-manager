@@ -1,0 +1,38 @@
+<view class="container">
+  <view class="header">
+    <view class="logo">💧</view>
+    <view class="title">智慧水务管理系统</view>
+    <view class="subtitle">污水处理厂运行管理平台</view>
+  </view>
+
+  <view class="quick-grid">
+    <view class="quick-item" bindtap="goSystem">
+      <view class="icon">📊</view>
+      <view class="label">数据填报</view>
+    </view>
+    <view class="quick-item" bindtap="goSystem">
+      <view class="icon">📈</view>
+      <view class="label">趋势分析</view>
+    </view>
+    <view class="quick-item" bindtap="goSystem">
+      <view class="icon">⚠️</view>
+      <view class="label">预警中心</view>
+    </view>
+    <view class="quick-item" bindtap="goSystem">
+      <view class="icon">🧮</view>
+      <view class="label">智能加药</view>
+    </view>
+    <view class="quick-item" bindtap="goSystem">
+      <view class="icon">🦠</view>
+      <view class="label">污泥分析</view>
+    </view>
+    <view class="quick-item" bindtap="goSystem">
+      <view class="icon">📥</view>
+      <view class="label">报表下载</view>
+    </view>
+  </view>
+
+  <view class="enter-btn">
+    <button bindtap="goSystem">进入系统</button>
+  </view>
+</view>

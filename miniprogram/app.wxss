@@ -1,0 +1,14 @@
+page { background: #f0f2f5; }
+.container { padding: 32rpx; }
+.header { text-align: center; padding: 48rpx 0 32rpx; }
+.header .logo { font-size: 64rpx; }
+.header .title { font-size: 36rpx; font-weight: bold; color: #1890ff; margin-top: 16rpx; }
+.header .subtitle { font-size: 24rpx; color: #8c8c8c; margin-top: 8rpx; }
+
+.quick-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20rpx; margin-top: 32rpx; }
+.quick-item { background: #fff; border-radius: 16rpx; padding: 32rpx 16rpx; text-align: center; box-shadow: 0 2rpx 12rpx rgba(0,0,0,0.06); }
+.quick-item .icon { font-size: 48rpx; margin-bottom: 8rpx; }
+.quick-item .label { font-size: 24rpx; color: #333; }
+
+.enter-btn { margin-top: 48rpx; }
+.enter-btn button { background: #1890ff; color: #fff; border-radius: 48rpx; font-size: 32rpx; padding: 24rpx; }
