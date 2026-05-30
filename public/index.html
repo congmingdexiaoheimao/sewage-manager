@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>污水处理厂运行管理系统</title>
+  <link rel="stylesheet" href="style.css?v=4">
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Sidebar (desktop) -->
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-logo"><span class="logo-icon">🏭</span><span>污水厂管理</span></div>
+      <nav class="sidebar-nav">
+        <button class="sidebar-item active" data-tab="home"><span class="si-icon">🏠</span>首页</button>
+        <button class="sidebar-item" data-tab="fill"><span class="si-icon">📝</span>数据填报</button>
+        <button class="sidebar-item" data-tab="data"><span class="si-icon">📊</span>数据查询</button>
+        <button class="sidebar-item" data-tab="tools"><span class="si-icon">⚙️</span>智能工具</button>
+        <button class="sidebar-item" data-tab="me"><span class="si-icon">👤</span>个人中心</button>
+      </nav>
+      <div class="sidebar-footer">v3.0 智慧水务</div>
+    </div>
+
+    <!-- Header -->
+    <div class="app-header">
+      <h1 id="headerTitle">🏭 污水厂运行管理</h1>
+      <div class="header-user">
+        <span id="headerRole" class="header-badge"></span>
+        <span id="headerName" style="font-size:12px;"></span>
+      </div>
+    </div>
+
+    <!-- Tab Pages -->
+    <div id="page-home" class="page active"></div>
+    <div id="page-fill" class="page"></div>
+    <div id="page-data" class="page"></div>
+    <div id="page-tools" class="page"></div>
+    <div id="page-me" class="page"></div>
+
+    <!-- Bottom Tab Bar -->
+    <div class="tab-bar" id="tabBar">
+      <button class="tab-item active" data-tab="home"><span class="tab-icon">🏠</span>首页</button>
+      <button class="tab-item" data-tab="fill"><span class="tab-icon">📝</span>填报</button>
+      <button class="tab-item" data-tab="data"><span class="tab-icon">📊</span>数据</button>
+      <button class="tab-item" data-tab="tools"><span class="tab-icon">⚙️</span>工具</button>
+      <button class="tab-item" data-tab="me" style="position:relative;"><span class="tab-icon">👤</span>我的<span class="tab-badge hidden" id="tabAlertBadge">0</span></button>
+    </div>
+
+    <!-- Modal overlay -->
+    <div class="modal-overlay hidden" id="modalOverlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal-content" id="modalContent"></div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toastContainer"></div>
+  </div>
+
+  <script>
+    // ==================== 全局状态 ====================
+    const API = window.location.origin;
+    let currentUser = null, currentPermissions = null, currentTab = 'home';
+    let chartInstances = {};
+
+    // ==================== 初始化 ====================
+    (async function init() {
+      const token = localStorage.getItem('sb_token');
+      const user = JSON.parse(localStorage.getItem('sb_user') || 'null');
+      if (!token || !user) { window.location.href = '/login.html'; return; }
+      currentUser = user;
+      currentPermissions = user.permissions || {};
+
+      // 设置 header
+      const roleCls = { '厂长': 'admin', '副厂长': 'admin', '运营管理部': 'ops', '技术管理部': 'tech', '文员': 'clerk', '运营班组': 'ops', '化验主管': 'tech', '化验员': 'tech' };
+      document.getElementById('headerName').textContent = user.name;
+      const badge = document.getElementById('headerRole');
+      badge.textContent = user.role;
+      badge.className = 'header-badge ' + (roleCls[user.role] || '');
+
+      // Tab 切换
+      document.querySelectorAll('.tab-item').forEach(btn => {
+        btn.addEventListener('click', function() { switchTab(this.dataset.tab); });
+      });
+      // Sidebar 切换
+      document.querySelectorAll('.sidebar-item').forEach(btn => {
+        btn.addEventListener('click', function() { switchTab(this.dataset.tab); });
+      });
+
+      // 加载首页
+      switchTab('home');
+      loadAlertBadge();
+      setInterval(loadAlertBadge, 60000);
+    })();
+
+    async function loadAlertBadge() {
+      try {
+        const res = await fetch(API + '/api/alerts/active', { headers: authHeaders() });
+        const alerts = await res.json();
+        const badge = document.getElementById('tabAlertBadge');
+        if (alerts.length > 0) { badge.textContent = alerts.length; badge.classList.remove('hidden'); }
+        else { badge.classList.add('hidden'); }
+      } catch {}
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+      document.querySelectorAll('.sidebar-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.getElementById('page-' + tab).classList.add('active');
+
+      const titles = { home: '🏭 污水厂运行管理', fill: '📝 数据填报', data: '📊 数据查询', tools: '⚙️ 智能工具', me: '👤 个人中心' };
+      document.getElementById('headerTitle').textContent = titles[tab] || '污水厂运行管理';
+
+      switch (tab) {
+        case 'home': renderHome(); break;
+        case 'fill': renderFill(); break;
+        case 'data': renderData(); break;
+        case 'tools': renderTools(); break;
+        case 'me': renderMe(); break;
+      }
+    }
+
+    // ==================== 工具函数 ====================
+    function authHeaders() {
+      return { 'Authorization': 'Bearer ' + localStorage.getItem('sb_token'), 'Content-Type': 'application/json' };
+    }
+    function toast(msg, type) {
+      type = type || 'success';
+      const c = document.getElementById('toastContainer');
+      const el = document.createElement('div');
+      el.className = 'toast ' + type; el.textContent = msg; c.appendChild(el);
+      setTimeout(() => { el.remove(); }, 2500);
+    }
+    function openModal(html) {
+      document.getElementById('modalContent').innerHTML = html;
+      document.getElementById('modalOverlay').classList.remove('hidden');
+    }
+    function closeModal() { document.getElementById('modalOverlay').classList.add('hidden'); }
+    function formatDate(d) { return d ? new Date(d).toISOString().slice(0, 10) : ''; }
+
+    // ==================== 首页 ====================
+    async function renderHome() {
+      const page = document.getElementById('page-home');
+      page.innerHTML = '<div class="loading">加载中...</div>';
+      try {
+        const [statsRes, streamRes] = await Promise.all([
+          fetch(API + '/api/stats/summary', { headers: authHeaders() }),
+          fetch(API + '/api/stream', { headers: authHeaders() })
+        ]);
+        const stats = await statsRes.json();
+        const stream = await streamRes.json();
+
+        // 信息滚动条
+        let tickerHtml = '<div class="info-ticker"><div class="info-ticker-label">📡 实时动态</div><div class="info-ticker-wrap"><div class="info-ticker-track">';
+        const items = (stream.items || []).slice(0, 20);
+        if (items.length === 0) {
+          tickerHtml += '<span style="color:rgba(255,255,255,0.4);padding:0 16px;">暂无动态</span>';
+        } else {
+          const tagClass = { '异常': 'anomaly', '报送': 'submit', '动态': 'dynamic' };
+          for (let loop = 0; loop < 2; loop++) {
+            items.forEach((item, i) => {
+              tickerHtml += '<span class="info-ticker-item"><span class="ticker-tag ' + (tagClass[item.type] || '') + '">' + (item.tag || item.type) + '</span> ' + item.icon + ' ' + item.title + '</span>';
+              if (i < items.length - 1) tickerHtml += '<span style="color:rgba(255,255,255,0.2);margin:0 4px;">|</span>';
+            });
+          }
+        }
+        tickerHtml += '</div></div></div>';
+
+        // 统计卡片
+        let statsHtml = '<div class="stats-grid">';
+        statsHtml += '<div class="stat-card danger"><div class="stat-value">' + stats.alerts.active + '</div><div class="stat-label">⚠️ 活跃预警</div></div>';
+        statsHtml += '<div class="stat-card warning"><div class="stat-value">' + stats.tasks.pending + '</div><div class="stat-label">📝 待办任务</div></div>';
+        statsHtml += '<div class="stat-card primary"><div class="stat-value">' + stats.today.inspection + '</div><div class="stat-label">🔍 今日巡检</div></div>';
+        statsHtml += '<div class="stat-card success"><div class="stat-value">' + stats.today.lab + '</div><div class="stat-label">🧪 今日化验</div></div>';
+        statsHtml += '</div>';
+
+        // 快捷操作
+        const canFill = currentPermissions.fillOps || currentPermissions.fillLab || currentPermissions.canManage;
+        let actionsHtml = '<div class="card"><div class="card-header"><h3>快捷操作</h3></div><div class="card-body"><div class="quick-actions">';
+        if (canFill) {
+          actionsHtml += '<button class="quick-action" onclick="switchTab(\'fill\')"><span class="qa-icon">📝</span>数据填报</button>';
+          actionsHtml += '<button class="quick-action" onclick="openDosingModal()"><span class="qa-icon">🧮</span>智能加药</button>';
+        }
+        actionsHtml += '<button class="quick-action" onclick="switchTab(\'data\')"><span class="qa-icon">📊</span>趋势分析</button>';
+        actionsHtml += '<button class="quick-action" onclick="switchTab(\'tools\')"><span class="qa-icon">📦</span>库存管理</button>';
+        if (currentPermissions.canManage || currentPermissions.canExport) {
+          actionsHtml += '<button class="quick-action" onclick="switchTab(\'tools\')\"><span class="qa-icon">📤</span>数据导出</button>';
+        }
+        actionsHtml += '</div></div></div>';
+
+        // 欢迎卡片
+        const hour = new Date().getHours();
+        const greeting = hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好';
+        let welcomeHtml = '<div class="card"><div class="card-body" style="display:flex;align-items:center;gap:12px;">';
+        welcomeHtml += '<div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#1890ff,#096dd9);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;">' + (currentUser.name || '?')[0] + '</div>';
+        welcomeHtml += '<div><div style="font-size:16px;font-weight:600;">' + greeting + '，' + currentUser.name + '</div><div style="font-size:12px;color:#8c8c8c;">' + currentUser.role + ' · 今天是 ' + new Date().toLocaleDateString('zh-CN') + '</div></div>';
+        welcomeHtml += '</div></div>';
+
+        // 快捷入口 (大按钮)
+        let entriesHtml = '<div class="card"><div class="card-header"><h3>快捷入口</h3></div><div class="card-body"><div class="fill-grid">';
+        entriesHtml += '<div class="fill-entry" onclick="switchTab(\'fill\')"><div class="fe-icon">📝</div><div class="fe-title">数据填报</div></div>';
+        entriesHtml += '<div class="fill-entry" onclick="switchTab(\'data\')"><div class="fe-icon">📊</div><div class="fe-title">数据查询</div></div>';
+        entriesHtml += '<div class="fill-entry" onclick="openDosingModal()"><div class="fe-icon">🧮</div><div class="fe-title">智能加药</div></div>';
+        entriesHtml += '<div class="fill-entry" onclick="openSludgeAnalysis()"><div class="fe-icon">🦠</div><div class="fe-title">污泥分析</div></div>';
+        entriesHtml += '</div></div></div>';
+
+        let leftCol = tickerHtml + statsHtml + welcomeHtml + entriesHtml + actionsHtml;
+        let rightCol = '<div class="card"><div class="card-header"><h3>⚠️ 最近预警</h3><span style="font-size:12px;color:#1890ff;cursor:pointer;" onclick="switchTab(\'tools\')">全部 →</span></div><div class="card-body no-padding">';
+        const alerts = (stream.items || []).filter(i => i.type === '异常').slice(0, 5);
+        if (alerts.length === 0) rightCol += '<div class="empty">暂无预警</div>';
+        else alerts.forEach(a => {
+          rightCol += '<div class="alert-item"><div class="al-icon">' + a.icon + '</div><div class="al-body"><div class="al-title">' + a.title + '</div><div class="al-detail">' + a.detail + '</div><div class="al-meta"><span>' + a.tag + '</span></div></div></div>';
+        });
+        rightCol += '</div></div>';
+
+        // 最近动态
+        rightCol += '<div class="card"><div class="card-header"><h3>📡 最近动态</h3></div><div class="card-body no-padding">';
+        const recentItems = (stream.items || []).slice(0, 6);
+        if (recentItems.length === 0) rightCol += '<div class="empty">暂无动态</div>';
+        else recentItems.forEach(item => {
+          const timeStr = item.time ? new Date(item.time).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+          rightCol += '<div class="timeline-item ' + item.type + '"><div class="tl-icon">' + item.icon + '</div><div class="tl-body"><div class="tl-title">' + item.title + '</div><div class="tl-detail">' + item.detail + '</div><div class="tl-meta"><span class="tl-tag ' + item.type + (item.level === 'high' ? ' high' : '') + '">' + (item.tag || item.type) + '</span><span>' + timeStr + '</span></div></div></div>';
+        });
+        rightCol += '</div></div>';
+
+        page.innerHTML = '<div class="dashboard-grid"><div class="dashboard-left">' + leftCol + '</div><div class="dashboard-right">' + rightCol + '</div></div>';
+      } catch (e) { page.innerHTML = '<div class="loading">加载失败，请刷新重试</div>'; }
+    }
+
+    // ==================== 填报中心 ====================
+    function renderFill() {
+      const page = document.getElementById('page-fill');
+      const isOps = currentPermissions.fillOps || currentPermissions.isOps || currentPermissions.canManage;
+      const isLab = currentPermissions.fillLab || currentPermissions.reviewLab || currentPermissions.isTech || currentPermissions.canManage;
+
+      let html = '<div class="page-header"><h2>数据填报</h2><p>选择填报类型</p></div><div class="fill-grid">';
+
+      if (isOps) {
+        html += '<div class="fill-entry" onclick="openFillForm(\'do_inspection\')"><div class="fe-icon">🔍</div><div class="fe-title">DO巡检</div><div class="fe-count">东西系列·6池DO</div></div>';
+        html += '<div class="fill-entry" onclick="openFillForm(\'hourly_water\')"><div class="fe-icon">💧</div><div class="fe-title">小时进出水</div><div class="fe-count">24小时逐时记录</div></div>';
+        html += '<div class="fill-entry" onclick="openFillForm(\'chemical_dosing\')"><div class="fe-icon">🧪</div><div class="fe-title">药剂投加</div><div class="fe-count">6种药剂记录</div></div>';
+        html += '<div class="fill-entry" onclick="openFillForm(\'chemical_inventory\')"><div class="fe-icon">📦</div><div class="fe-title">药剂出入库</div><div class="fe-count">库存管理</div></div>';
+        html += '<div class="fill-entry" onclick="openFillForm(\'dewatering\')"><div class="fe-icon">🔄</div><div class="fe-title">脱泥生产</div><div class="fe-count">运行记录</div></div>';
+      }
+
+      if (isLab) {
+        html += '<div class="fill-entry" onclick="openFillForm(\'daily_lab\')"><div class="fe-icon">🧫</div><div class="fe-title">每日化验</div><div class="fe-count">18项指标</div></div>';
+        html += '<div class="fill-entry" onclick="openFillForm(\'weekly_lab\')"><div class="fe-icon">📅</div><div class="fe-title">每周化验</div><div class="fe-count">4项指标</div></div>';
+        html += '<div class="fill-entry" onclick="openFillForm(\'sludge_special\')"><div class="fe-icon">🪨</div><div class="fe-title">污泥专项</div><div class="fe-count">3项指标</div></div>';
+      }
+
+      if (!isOps && !isLab) {
+        html = '<div class="page-header"><h2>数据填报</h2></div><div class="card"><div class="card-body"><div class="empty">当前角色无填报权限</div></div></div>';
+      }
+
+      html += '</div>';
+      page.innerHTML = html;
+    }
+
+    // 通用填报表单
+    function openFillForm(table) {
+      const forms = {
+        do_inspection: {
+          title: 'DO巡检记录',
+          fields: [
+            { section: '基本信息' },
+            { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
+            { name: 'shift', label: '班次', type: 'select', options: ['早班','中班','晚班'], required: true },
+            { name: 'series', label: '系列', type: 'select', options: ['east','west'], labels: ['东系列','西系列'], required: true },
+            { section: '溶解氧数值 (mg/L)' },
+            { name: 'anaerobic', label: '厌氧池 DO', type: 'number', step: '0.01', placeholder: '0.10-0.50' },
+            { name: 'anoxic', label: '缺氧池 DO', type: 'number', step: '0.01', placeholder: '0.30-1.00' },
+            { name: 'aerobic1', label: '好氧池1 DO', type: 'number', step: '0.01', placeholder: '1.50-3.00' },
+            { name: 'aerobic2', label: '好氧池2 DO', type: 'number', step: '0.01', placeholder: '1.50-3.00' },
+            { name: 'aerobic3', label: '好氧池3 DO', type: 'number', step: '0.01', placeholder: '2.00-3.50' },
+            { name: 'aerobic4', label: '好氧池4 DO', type: 'number', step: '0.01', placeholder: '2.00-3.50' },
+            { name: 'remark', label: '备注', type: 'textarea', placeholder: '异常情况说明...' },
+          ]
+        },
+        hourly_water: {
+          title: '小时进出水记录',
+          fields: [
+            { section: '基本信息' },
+            { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
+            { name: 'hour', label: '小时 (0-23)', type: 'number', min: 0, max: 23, required: true, default: new Date().getHours() },
+            { section: '进水指标' },
+            { name: 'inCod', label: '进水COD (mg/L)', type: 'number', step: '0.1' },
+            { name: 'inNh3', label: '进水氨氮 (mg/L)', type: 'number', step: '0.01' },
+            { name: 'inTn', label: '进水总氮 (mg/L)', type: 'number', step: '0.01' },
+            { name: 'inTp', label: '进水总磷 (mg/L)', type: 'number', step: '0.01' },
+            { name: 'inFlow', label: '进水流量 (m³/h)', type: 'number', step: '0.1' },
+            { name: 'inPh', label: '进水pH', type: 'number', step: '0.01' },
+            { section: '出水指标' },
+            { name: 'outCod', label: '出水COD (mg/L)', type: 'number', step: '0.1' },
+            { name: 'outNh3', label: '出水氨氮 (mg/L)', type: 'number', step: '0.01' },
+            { name: 'outTn', label: '出水总氮 (mg/L)', type: 'number', step: '0.01' },
+            { name: 'outTp', label: '出水总磷 (mg/L)', type: 'number', step: '0.01' },
+            { name: 'outFlow', label: '出水流量 (m³/h)', type: 'number', step: '0.1' },
+            { name: 'outPh', label: '出水pH', type: 'number', step: '0.01' },
+          ]
+        },
+        daily_lab: {
+          title: '每日化验记录',
+          fields: [
+            { section: '基本信息' },
+            { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
+            { section: '水质指标' },
+            { name: 'ph', label: 'pH', type: 'number', step: '0.01' },
+            { name: 'ss', label: 'SS (mg/L)', type: 'number', step: '0.1' },
+            { name: 'bod5', label: 'BOD5 (mg/L)', type: 'number', step: '0.1' },
+            { name: 'cod', label: 'COD (mg/L)', type: 'number', step: '0.1' },
+            { name: 'nh3', label: '氨氮 (mg/L)', type: 'number', step: '0.01' },
+            { name: 'tn', label: '总氮 (mg/L)', type: 'number', step: '0.01' },
+            { name: 'tp', label: '总磷 (mg/L)', type: 'number', step: '0.01' },
+            { name: 'fecalColiform', label: '粪大肠菌群 (MPN/L)', type: 'number' },
+            { section: '污泥工艺指标' },
+            { name: 'sv30', label: 'SV30 (%)', type: 'number', step: '0.1' },
+            { name: 'svi', label: 'SVI (mL/g)', type: 'number', step: '0.1' },
+            { name: 'mlss', label: 'MLSS (mg/L)', type: 'number' },
+            { name: 'microscope', label: '镜检记录', type: 'textarea', placeholder: '菌胶团结构、原生动物情况...' },
+            { section: '运行参数' },
+            { name: 'sv30East', label: '东系列SV30 (%)', type: 'number', step: '0.1' },
+            { name: 'sv30West', label: '西系列SV30 (%)', type: 'number', step: '0.1' },
+            { name: 'waterTempEast', label: '东系列水温 (°C)', type: 'number', step: '0.1' },
+            { name: 'waterTempWest', label: '西系列水温 (°C)', type: 'number', step: '0.1' },
+            { name: 'internalReflux', label: '内回流比 (%)', type: 'number' },
+            { name: 'externalReflux', label: '外回流比 (%)', type: 'number' },
+          ]
+        },
+        weekly_lab: {
+          title: '每周化验记录',
+          fields: [
+            { name: 'weekStart', label: '周起始日期', type: 'date', required: true },
+            { name: 'weekEnd', label: '周结束日期', type: 'date', required: true },
+            { section: '检测指标' },
+            { name: 'chloride', label: '氯化物 (mg/L)', type: 'number', step: '0.1' },
+            { name: 'mlvss', label: 'MLVSS (mg/L)', type: 'number' },
+            { name: 'totalSolid', label: '总固体 (mg/L)', type: 'number' },
+            { name: 'dissolvedSolid', label: '溶解性总固体 (mg/L)', type: 'number' },
+          ]
+        },
+        sludge_special: {
+          title: '污泥专项记录',
+          fields: [
+            { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
+            { name: 'batchNo', label: '批次号', type: 'text' },
+            { name: 'waterContent', label: '污泥含水量 (%)', type: 'number', step: '0.1' },
+            { name: 'ph', label: '污泥pH', type: 'number', step: '0.01' },
+            { name: 'organicMatter', label: '污泥有机质 (%)', type: 'number', step: '0.1' },
+          ]
+        },
+        dewatering: {
+          title: '脱泥生产记录',
+          fields: [
+            { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
+            { name: 'startTime', label: '开始时间', type: 'time' },
+            { name: 'endTime', label: '结束时间', type: 'time' },
+            { name: 'duration', label: '运行时长 (h)', type: 'number', step: '0.1' },
+            { name: 'sludgeOutput', label: '污泥产量 (吨)', type: 'number', step: '0.1' },
+            { name: 'abnormality', label: '异常备注', type: 'textarea', placeholder: '设备异常情况...' },
+          ]
+        },
+        chemical_dosing: {
+          title: '药剂投加记录',
+          fields: [
+            { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
+            { name: 'shift', label: '班次', type: 'select', options: ['早班','中班','晚班'], required: true },
+            { section: '投加量 (kg)' },
+            { name: 'carbonSource', label: '碳源 (kg)', type: 'number', step: '0.1' },
+            { name: 'glucose', label: '葡萄糖 (kg)', type: 'number', step: '0.1' },
+            { name: 'pac', label: 'PAC (kg)', type: 'number', step: '0.1' },
+            { name: 'anionPam', label: '阴离子PAM (kg)', type: 'number', step: '0.1' },
+            { name: 'cationPam', label: '阳离子PAM (kg)', type: 'number', step: '0.1' },
+            { name: 'naclo', label: '次氯酸钠 (kg)', type: 'number', step: '0.1' },
+          ]
+        },
+        chemical_inventory: {
+          title: '药剂出入库',
+          fields: [
+            { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
+            { name: 'chemicalType', label: '药剂类型', type: 'select', options: ['carbonSource','glucose','pac','anionPam','cationPam','naclo'], labels: ['碳源','葡萄糖','PAC','阴离子PAM','阳离子PAM','次氯酸钠'], required: true },
+            { name: 'type', label: '操作类型', type: 'select', options: ['in','out','use'], labels: ['入库','出库','使用消耗'], required: true },
+            { name: 'quantity', label: '数量 (kg)', type: 'number', step: '0.1', required: true },
+            { name: 'supplier', label: '供应商', type: 'text' },
+            { name: 'batchNo', label: '批号', type: 'text' },
+            { name: 'remark', label: '备注', type: 'textarea' },
+          ]
+        }
+      };
+
+      const form = forms[table];
+      if (!form) { toast('表单未定义', 'error'); return; }
+
+      let html = '<div class="modal-header"><h3>' + form.title + '</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+      html += '<form onsubmit="submitFillForm(event,\'' + table + '\')"><div class="modal-body">';
+      form.fields.forEach(f => {
+        if (f.section) { html += '<div class="form-section">' + f.section + '</div>'; return; }
+        html += '<div class="form-group"><label>' + f.label + (f.required ? ' <span style="color:red">*</span>' : '') + '</label>';
+        if (f.type === 'select') {
+          html += '<select name="' + f.name + '"' + (f.required ? ' required' : '') + '><option value="">请选择</option>';
+          (f.options || []).forEach((o, i) => {
+            html += '<option value="' + o + '">' + ((f.labels && f.labels[i]) || o) + '</option>';
+          });
+          html += '</select>';
+        } else if (f.type === 'textarea') {
+          html += '<textarea name="' + f.name + '" rows="3" placeholder="' + (f.placeholder || '') + '" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-size:14px;"></textarea>';
+        } else {
+          html += '<input type="' + f.type + '" name="' + f.name + '"' + (f.required ? ' required' : '') + (f.step ? ' step="' + f.step + '"' : '') + (f.min !== undefined ? ' min="' + f.min + '"' : '') + (f.max !== undefined ? ' max="' + f.max + '"' : '') + (f.placeholder ? ' placeholder="' + f.placeholder + '"' : '') + (f.default ? ' value="' + f.default + '"' : '') + '>';
+        }
+        html += '</div>';
+      });
+      html += '</div><div class="modal-footer"><button type="button" class="btn btn-outline" onclick="closeModal()">取消</button><button type="submit" class="btn btn-primary">提交</button></div></form>';
+      openModal(html);
+    }
+
+    async function submitFillForm(e, table) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const record = { id: table + '_' + Date.now(), createTime: new Date().toISOString(), operator: currentUser.name };
+      for (const [k, v] of fd.entries()) { if (v !== '') record[k] = v; }
+      try {
+        const res = await fetch(API + '/api/' + table, { method: 'POST', headers: authHeaders(), body: JSON.stringify(record) });
+        const data = await res.json();
+        if (data.success) { toast('提交成功'); closeModal(); loadAlertBadge(); }
+        else toast(data.error || '提交失败', 'error');
+      } catch (e) { toast('网络错误', 'error'); }
+    }
+
+    // ==================== 数据查询 ====================
+    function renderData() {
+      const page = document.getElementById('page-data');
+      let html = '<div class="page-header"><h2>数据查询与趋势</h2></div>';
+
+      // 污泥指标综合分析
+      html += '<div class="card mb-12"><div class="card-header"><h3>🦠 污泥指标分析 (SV30/MLSS/SVI/镜检)</h3></div><div class="card-body"><div class="quick-actions">';
+      html += '<button class="quick-action" onclick="openSludgeAnalysis()"><span class="qa-icon">📊</span>综合分析</button>';
+      html += '<button class="quick-action" onclick="openSludgeQA()"><span class="qa-icon">💬</span>数据问答</button>';
+      html += '</div></div></div>';
+
+      html += '<div class="card mb-12"><div class="card-header"><h3>📋 数据表格</h3></div><div class="card-body"><div class="fill-grid">';
+      const tables = [
+        { key: 'do_inspection', name: 'DO巡检', icon: '🔍' },
+        { key: 'hourly_water', name: '小时进出水', icon: '💧' },
+        { key: 'daily_lab', name: '每日化验', icon: '🧫' },
+        { key: 'weekly_lab', name: '每周化验', icon: '📅' },
+        { key: 'sludge_special', name: '污泥专项', icon: '🪨' },
+        { key: 'dewatering', name: '脱泥生产', icon: '🔄' },
+        { key: 'chemical_dosing', name: '药剂投加', icon: '🧪' },
+        { key: 'chemical_inventory', name: '药剂库存', icon: '📦' },
+        { key: 'tasks', name: '任务管理', icon: '📝' },
+      ];
+      tables.forEach(t => {
+        html += '<div class="fill-entry" onclick="openDataView(\'' + t.key + '\',\'' + t.name + '\')"><div class="fe-icon">' + t.icon + '</div><div class="fe-title">' + t.name + '</div></div>';
+      });
+      html += '</div></div></div>';
+
+      html += '<div class="card mt-12"><div class="card-header"><h3>📈 趋势分析</h3></div><div class="card-body"><div class="quick-actions">';
+      html += '<button class="quick-action" onclick="openTrends(\'water\')"><span class="qa-icon">💧</span>进出水水质趋势</button>';
+      html += '<button class="quick-action" onclick="openTrends(\'do\')"><span class="qa-icon">🔍</span>各池DO波动</button>';
+      html += '<button class="quick-action" onclick="openTrends(\'sludge\')"><span class="qa-icon">🦠</span>污泥指标趋势</button>';
+      html += '<button class="quick-action" onclick="openTrends(\'chemical\')"><span class="qa-icon">🧪</span>药剂投加趋势</button>';
+      html += '</div></div></div>';
+
+      page.innerHTML = html;
+    }
+
+    async function openDataView(table, name) {
+      try {
+        const [res, fieldsRes] = await Promise.all([
+          fetch(API + '/api/' + table + '?limit=50', { headers: authHeaders() }),
+          fetch(API + '/api/fields/' + table, { headers: authHeaders() }).catch(() => ({ json: () => ({}) }))
+        ]);
+        const result = await res.json();
+        const fields = await fieldsRes.json();
+        const data = result.data || result || [];
+        let html = '<div class="modal-header"><h3>' + name + ' (' + (result.total || data.length) + '条)</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+        html += '<div class="modal-body"><div class="table-wrapper"><table><thead><tr>';
+        if (data.length > 0) {
+          const keys = Object.keys(data[0]).filter(k => !k.startsWith('_') && k !== 'password');
+          keys.forEach(k => html += '<th>' + (fields[k] || k) + '</th>');
+          html += '</tr></thead><tbody>';
+          data.forEach(row => {
+            html += '<tr>';
+            keys.forEach(k => {
+              let v = row[k];
+              if (k === 'reviewStatus' && v === 'pending') v = '待审核';
+              else if (k === 'reviewStatus' && v === 'approved') v = '已审核';
+              else if (k === 'type' && table === 'chemical_inventory') { if (v === 'in') v = '入库'; else if (v === 'out') v = '出库'; else if (v === 'use') v = '消耗'; }
+              else if (k === 'type' && table === 'alerts') { if (v === 'alert') v = '预警'; }
+              else if (k === 'status' && table === 'alerts') { if (v === 'active') v = '活跃'; else if (v === 'resolved') v = '已处理'; }
+              else if (k === 'status' && table === 'tasks') { if (v === '待处理') v = '⏳待处理'; else if (v === '处理中') v = '🔄处理中'; else if (v === '已完成') v = '✅已完成'; }
+              else if (k === 'status' && table === 'users') { if (v === 'active') v = '✅启用'; else v = '❌禁用'; }
+              else if (k === 'chemicalType' && v) { const m = { carbonSource:'碳源', glucose:'葡萄糖', pac:'PAC', anionPam:'阴离子PAM', cationPam:'阳离子PAM', naclo:'次氯酸钠' }; v = m[v] || v; }
+              else if (k === 'series' && v) { v = v === 'east' ? '东系列' : v === 'west' ? '西系列' : v; }
+              html += '<td>' + (v !== undefined && v !== null ? String(v).slice(0, 40) : '-') + '</td>';
+            });
+            html += '</tr>';
+          });
+        }
+        html += '</tbody></table></div></div>';
+        html += '<div class="modal-footer"><button class="btn btn-primary" onclick="exportTable(\'' + table + '\')">📥 导出Excel</button><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+        openModal(html);
+      } catch (e) { toast('加载失败', 'error'); }
+    }
+
+    async function exportTable(table) {
+      try {
+        window.open(API + '/api/export/' + table + '?token=' + localStorage.getItem('sb_token'), '_blank');
+        toast('导出已开始');
+      } catch (e) { toast('导出失败', 'error'); }
+    }
+
+    // ==================== 趋势图 ====================
+    async function openTrends(type) {
+      const names = { water: '进出水水质趋势', do: '各池DO波动', sludge: '污泥指标趋势', chemical: '药剂投加趋势' };
+      let html = '<div class="modal-header"><h3>📈 ' + names[type] + '</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+      html += '<div class="modal-body"><div class="filter-bar"><button class="filter-chip active" onclick="loadTrendChart(\'' + type + '\',7)">近7天</button><button class="filter-chip" onclick="loadTrendChart(\'' + type + '\',30)">近30天</button></div>';
+      html += '<div class="chart-container"><canvas id="trendChart"></canvas></div></div>';
+      openModal(html);
+      await loadTrendChart(type, 7);
+    }
+
+    async function loadTrendChart(type, range) {
+      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      event.target.classList.add('active');
+      try {
+        const res = await fetch(API + '/api/trends?type=' + type + '&range=' + range, { headers: authHeaders() });
+        const data = await res.json();
+
+        const ctx = document.getElementById('trendChart');
+        if (!ctx) return;
+        if (chartInstances.trend) chartInstances.trend.destroy();
+
+        chartInstances.trend = new Chart(ctx, {
+          type: 'line',
+          data: data,
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, padding: 10, font: { size: 10 } } } },
+            scales: {
+              y: { beginAtZero: true, ticks: { font: { size: 10 } }, title: { display: true, text: type === 'do' ? 'DO (mg/L)' : type === 'sludge' ? 'SV30 (%)' : 'mg/L', font: { size: 10 } } },
+              y1: type === 'sludge' ? { position: 'right', beginAtZero: true, ticks: { font: { size: 10 } }, title: { display: true, text: 'MLSS (mg/L)', font: { size: 10 } }, grid: { drawOnChartArea: false } } : undefined,
+              x: { ticks: { font: { size: 10 }, maxTicksLimit: 8 } }
+            },
+            interaction: { intersect: false, mode: 'index' }
+          }
+        });
+      } catch (e) { console.error(e); }
+    }
+
+    // ==================== 智能加药（数据驱动综合判定） ====================
+    function openDosingModal() {
+      let html = '<div class="modal-header"><h3>🧮 智能加药分析</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+      html += '<div class="modal-body">';
+
+      // 模式切换
+      html += '<div style="display:flex;gap:8px;margin-bottom:12px;">';
+      html += '<button id="dosingModeAuto" class="btn btn-primary" style="flex:1;" onclick="switchDosingMode(\'auto\')">📊 从数据自动分析</button>';
+      html += '<button id="dosingModeManual" class="btn btn-outline" style="flex:1;" onclick="switchDosingMode(\'manual\')">✏️ 手动输入参数</button>';
+      html += '</div>';
+
+      // 自动模式区域
+      html += '<div id="dosingAutoSection">';
+      html += '<div class="card"><div class="card-body" style="text-align:center;padding:20px;">';
+      html += '<p style="font-size:13px;color:#595959;margin-bottom:8px;">系统将自动读取最近24小时进出水数据及7天污泥指标</p>';
+      html += '<p style="font-size:12px;color:#8c8c8c;margin-bottom:16px;">综合分析水质趋势、污泥特性、历史投加量后给出推荐</p>';
+      html += '<button class="btn btn-primary" onclick="runAutoDosing()" id="btnAutoDosing">🔍 开始智能分析</button>';
+      html += '</div></div>';
+      html += '</div>';
+
+      // 手动模式区域（默认隐藏）
+      html += '<div id="dosingManualSection" style="display:none;">';
+      html += '<form onsubmit="calcDosingAnalysis(event, false)"><div class="card"><div class="card-body">';
+      html += '<div class="form-section">进水参数</div>';
+      html += '<div class="form-row"><div class="form-group"><label>进水流量 (m³/d)</label><input type="number" name="inFlow" step="0.1" value="10000" required></div><div class="form-group"><label>进水COD (mg/L)</label><input type="number" name="inCod" step="0.1" value="250" required></div></div>';
+      html += '<div class="form-row"><div class="form-group"><label>进水氨氮 (mg/L)</label><input type="number" name="inNh3" step="0.01" value="25"></div><div class="form-group"><label>进水总氮 (mg/L)</label><input type="number" name="inTn" step="0.01" value="35" required></div></div>';
+      html += '<div class="form-group"><label>进水总磷 (mg/L)</label><input type="number" name="inTp" step="0.01" value="3" required></div>';
+      html += '</div></div><div class="modal-footer" style="border:none;padding-top:8px;"><button type="button" class="btn btn-outline" onclick="closeModal()">关闭</button><button type="submit" class="btn btn-primary">计算推荐量</button></div></form>';
+      html += '</div>';
+
+      // 结果区域
+      html += '<div id="dosingResult" style="margin-top:12px;"></div>';
+
+      html += '</div><div class="modal-footer"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+      openModal(html);
+    }
+
+    function switchDosingMode(mode) {
+      const autoBtn = document.getElementById('dosingModeAuto');
+      const manualBtn = document.getElementById('dosingModeManual');
+      const autoSec = document.getElementById('dosingAutoSection');
+      const manualSec = document.getElementById('dosingManualSection');
+      if (mode === 'auto') {
+        autoBtn.className = 'btn btn-primary'; autoBtn.style.flex = '1';
+        manualBtn.className = 'btn btn-outline'; manualBtn.style.flex = '1';
+        autoSec.style.display = 'block';
+        manualSec.style.display = 'none';
+      } else {
+        manualBtn.className = 'btn btn-primary'; manualBtn.style.flex = '1';
+        autoBtn.className = 'btn btn-outline'; autoBtn.style.flex = '1';
+        autoSec.style.display = 'none';
+        manualSec.style.display = 'block';
+      }
+    }
+
+    async function runAutoDosing() {
+      document.getElementById('btnAutoDosing').textContent = '⏳ 分析中...';
+      document.getElementById('btnAutoDosing').disabled = true;
+      try {
+        const res = await fetch(API + '/api/dosing/analysis?auto=1', { headers: authHeaders() });
+        const data = await res.json();
+        if (data.error) { toast(data.error, 'error'); document.getElementById('btnAutoDosing').textContent = '🔍 开始智能分析'; document.getElementById('btnAutoDosing').disabled = false; return; }
+        renderDosingResult(data);
+      } catch (e) { toast('分析失败: ' + e.message, 'error'); }
+      document.getElementById('btnAutoDosing').textContent = '🔄 重新分析';
+      document.getElementById('btnAutoDosing').disabled = false;
+    }
+
+    async function calcDosingAnalysis(e, isAuto) {
+      if (e) e.preventDefault();
+      let url = API + '/api/dosing/analysis?auto=' + (isAuto ? '1' : '0');
+      if (!isAuto && e) {
+        const fd = new FormData(e.target);
+        const params = new URLSearchParams();
+        for (const [k, v] of fd.entries()) params.append(k, v);
+        url = API + '/api/dosing/analysis?' + params.toString();
+      }
+      try {
+        const res = await fetch(url, { headers: authHeaders() });
+        const data = await res.json();
+        if (data.error) { toast(data.error, 'error'); return; }
+        renderDosingResult(data);
+      } catch (e) { toast('计算失败: ' + e.message, 'error'); }
+    }
+
+    function renderDosingResult(data) {
+      let html = '';
+
+      // 数据来源 & 输入概览
+      html += '<div class="card mb-8"><div class="card-header"><h3>📋 分析概览</h3></div><div class="card-body">';
+      html += '<div style="font-size:11px;color:#8c8c8c;margin-bottom:8px;">数据来源：' + (data.dataSource || '-') + '</div>';
+      const inp = data.input;
+      html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+      const inpLabels = [['流量', (inp.inFlow||0).toFixed(0) + ' m³/d'], ['COD', (inp.inCod||0).toFixed(0) + ' mg/L'], ['NH₃-N', (inp.inNh3||0).toFixed(1) + ' mg/L'], ['TN', (inp.inTn||0).toFixed(1) + ' mg/L'], ['TP', (inp.inTp||0).toFixed(2) + ' mg/L']];
+      inpLabels.forEach(([l, v]) => { html += '<span style="padding:3px 8px;background:#f0f5ff;border-radius:10px;font-size:12px;color:#1890ff;">' + l + ': ' + v + '</span>'; });
+      html += '</div></div></div>';
+
+      // 水质趋势 + 去除效率
+      if (data.waterQuality) {
+        const wq = data.waterQuality;
+        html += '<div class="card mb-8"><div class="card-header"><h3>💧 水质趋势（近14天）</h3></div><div class="card-body no-padding">';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;padding:8px;">';
+        ['inCod','inNh3','inTn','inTp','outCod','outNh3','outTn','outTp'].forEach(k => {
+          const t = wq.trends[k];
+          if (!t || t.avg === null) return;
+          const isIn = k.startsWith('in');
+          const label = isIn ? '进' : '出';
+          const nameMap = { inCod:'COD', inNh3:'NH₃', inTn:'TN', inTp:'TP', outCod:'COD', outNh3:'NH₃', outTn:'TN', outTp:'TP' };
+          const tIcon = t.trend === '上升' ? '📈' : t.trend === '下降' ? '📉' : '➡️';
+          html += '<div style="text-align:center;padding:6px;background:' + (isIn ? '#fff7e6' : '#e6f7ff') + ';border-radius:6px;">';
+          html += '<div style="font-size:10px;color:#8c8c8c;">' + label + '水' + nameMap[k] + '</div>';
+          html += '<div style="font-size:14px;font-weight:700;">' + t.avg.toFixed(1) + '</div>';
+          html += '<div style="font-size:10px;">' + tIcon + ' ' + t.trend + '</div></div>';
+        });
+        html += '</div>';
+
+        // 去除效率
+        if (wq.removalEfficiency) {
+          const re = wq.removalEfficiency;
+          html += '<div style="display:flex;gap:8px;padding:0 8px 8px;">';
+          ['cod','nh3','tn','tp'].forEach(k => {
+            if (re[k] === null) return;
+            const labelMap = { cod:'COD', nh3:'NH₃', tn:'TN', tp:'TP' };
+            const eff = re[k];
+            const effColor = eff >= 90 ? '#52c41a' : eff >= 75 ? '#faad14' : '#f5222d';
+            html += '<span style="padding:2px 8px;border-radius:8px;font-size:11px;background:' + effColor + '20;color:' + effColor + ';">' + labelMap[k] + '去除率 ' + eff + '%</span>';
+          });
+          html += '</div>';
+        }
+        html += '</div></div>';
+
+        // 水质告警
+        if (wq.warnings && wq.warnings.length > 0) {
+          html += '<div class="card mb-8" style="border-color:#f5222d;"><div class="card-header" style="color:#f5222d;"><h3>🚨 水质告警</h3></div><div class="card-body">';
+          wq.warnings.forEach(w => html += '<div style="font-size:12px;color:#f5222d;margin-bottom:4px;">• ' + w + '</div>');
+          html += '</div></div>';
+        }
+      }
+
+      // 污泥状态
+      if (data.sludgeStatus) {
+        const ss = data.sludgeStatus;
+        html += '<div class="card mb-8"><div class="card-header"><h3>🦠 污泥参数（近14天）</h3></div><div class="card-body no-padding">';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;padding:8px;">';
+        ['sv30','svi','mlss'].forEach(k => {
+          const s = ss[k];
+          if (!s || s.avg === null) return;
+          const labels = { sv30:'SV30', svi:'SVI', mlss:'MLSS' };
+          const units = { sv30:'%', svi:'mL/g', mlss:'mg/L' };
+          const tIcon = s.trend === '上升' ? '📈' : s.trend === '下降' ? '📉' : '➡️';
+          const statusCls = s.status.includes('偏高') || s.status.includes('膨胀') ? '#f5222d' : s.status.includes('偏低') ? '#faad14' : '#52c41a';
+          html += '<div style="text-align:center;padding:6px;background:#f6ffed;border-radius:6px;">';
+          html += '<div style="font-size:10px;color:#8c8c8c;">' + labels[k] + '</div>';
+          html += '<div style="font-size:14px;font-weight:700;">' + s.avg.toFixed(1) + '</div>';
+          html += '<div style="font-size:9px;color:#8c8c8c;">' + units[k] + '</div>';
+          html += '<div style="font-size:10px;margin-top:2px;">' + tIcon + ' ' + s.trend + '</div>';
+          html += '<div style="font-size:10px;color:' + statusCls + ';">' + s.status + '</div>';
+          html += '</div>';
+        });
+        html += '</div></div></div>';
+      }
+
+      // 诊断日志
+      if (data.diagnosisLog && data.diagnosisLog.length > 0) {
+        html += '<div class="card mb-8"><div class="card-header"><h3>📝 调整依据</h3></div><div class="card-body no-padding">';
+        data.diagnosisLog.forEach(d => {
+          const isWarn = d.includes('🚨') || d.includes('⚠️');
+          const bg = isWarn ? '#fff2f0' : '#f0f5ff';
+          html += '<div style="padding:6px 12px;font-size:12px;background:' + bg + ';border-bottom:1px solid #f0f0f0;line-height:1.5;">' + d + '</div>';
+        });
+        html += '</div></div>';
+      }
+
+      // 推荐结果
+      html += '<div class="card mb-8"><div class="card-header"><h3>🧪 药剂推荐量</h3></div><div class="card-body no-padding">';
+      (data.recommendations || []).forEach(r => {
+        const hasAdjust = r.adjustFactors && Object.values(r.adjustFactors).some(v => Math.abs(v - 1) > 0.001);
+        html += '<div class="dosing-chem" style="border:1px solid #f0f0f0;border-radius:8px;padding:10px;margin:6px;">';
+        html += '<div class="dc-name" style="font-size:15px;font-weight:700;display:flex;justify-content:space-between;align-items:center;">';
+        html += '<span>' + r.chemical + '</span>';
+        html += '<span style="font-size:20px;font-weight:700;color:' + (hasAdjust ? '#f5222d' : '#1890ff') + ';">' + r.value + '</span>';
+        html += '<span style="font-size:11px;color:#8c8c8c;">' + r.unit + '</span></div>';
+
+        // 调整因子
+        if (hasAdjust) {
+          html += '<div style="font-size:11px;color:#8c8c8c;margin-top:4px;">基础值: ' + (r.baseValue || '-') + ' ' + r.unit;
+          if (r.adjustFactors) {
+            Object.entries(r.adjustFactors).forEach(([k, v]) => {
+              if (Math.abs(v - 1) > 0.001) {
+                const labelMap = { sludge:'污泥调整', trend:'趋势调整', cod:'出水COD调整' };
+                html += ' | ' + (labelMap[k] || k) + ': ×' + v.toFixed(2);
+              }
+            });
+          }
+          html += '</div>';
+        }
+
+        html += '<div style="font-size:11px;color:#bfbfbf;margin-top:2px;">推荐范围: ' + (r.range || []).join(' - ') + ' ' + r.unit + '</div>';
+        html += '<div style="font-size:11px;color:#595959;margin-top:4px;">💡 ' + (r.tip || '') + '</div>';
+
+        // 历史对比
+        if (r.history && r.history.avg7d) {
+          const devCls = r.history.deviation && Math.abs(r.history.deviation) > 30 ? '#f5222d' : '#8c8c8c';
+          html += '<div style="font-size:11px;color:' + devCls + ';margin-top:4px;background:#fafafa;padding:4px 8px;border-radius:4px;">';
+          html += '📊 ' + r.history.comparison;
+          if (r.history.deviation !== null) html += '（偏差' + (r.history.deviation > 0 ? '+' : '') + r.history.deviation + '%）';
+          if (r.history.suggestion) html += '<br>' + r.history.suggestion;
+          html += '</div>';
+        }
+        html += '</div>';
+      });
+      html += '</div></div>';
+
+      // 综合评估
+      html += '<div class="card mb-8"><div class="card-header"><h3>📊 综合评估</h3></div><div class="card-body">';
+      const statusColor = (data.waterQualityWarnings || []).length > 0 || (data.sludgeWarnings || []).length > 0 ? '#faad14' : '#52c41a';
+      const statusIcon = (data.waterQualityWarnings || []).length > 0 || (data.sludgeWarnings || []).length > 0 ? '⚠️' : '✅';
+      html += '<div style="text-align:center;font-size:14px;font-weight:600;color:' + statusColor + ';">' + statusIcon + ' ' + (data.overallAssessment || '-') + '</div>';
+
+      if (data.sludgeWarnings && data.sludgeWarnings.length > 0) {
+        html += '<div style="margin-top:8px;">';
+        data.sludgeWarnings.forEach(w => html += '<div style="font-size:12px;color:#faad14;">• ' + w + '</div>');
+        html += '</div>';
+      }
+      html += '</div></div>';
+
+      // 趋势图
+      if (data.charts) {
+        html += '<div class="card mb-8"><div class="card-header"><h3>📈 趋势分析图</h3></div><div class="card-body">';
+        html += '<div class="chart-container" style="height:200px;"><canvas id="dosingWaterChart"></canvas></div>';
+        html += '<div class="chart-container" style="height:180px;margin-top:8px;"><canvas id="dosingSludgeChart"></canvas></div>';
+        html += '</div></div>';
+      }
+
+      document.getElementById('dosingResult').innerHTML = html;
+
+      // 绘制图表
+      if (data.charts) {
+        setTimeout(() => {
+          const ctx1 = document.getElementById('dosingWaterChart');
+          const ctx2 = document.getElementById('dosingSludgeChart');
+          if (!ctx1 || !ctx2) return;
+
+          if (chartInstances.dosing1) chartInstances.dosing1.destroy();
+          if (chartInstances.dosing2) chartInstances.dosing2.destroy();
+
+          const wqData = data.charts.waterQuality || [];
+          chartInstances.dosing1 = new Chart(ctx1, {
+            type: 'line',
+            data: {
+              labels: wqData.map(d => d.date),
+              datasets: [
+                { label: '进水COD', data: wqData.map(d => d.inCod), borderColor: '#ff4d4f', tension: 0.3, yAxisID: 'y' },
+                { label: '进水TN', data: wqData.map(d => d.inTn), borderColor: '#fa8c16', tension: 0.3, yAxisID: 'y' },
+                { label: '出水COD', data: wqData.map(d => d.outCod), borderColor: '#1890ff', tension: 0.3, yAxisID: 'y', borderDash: [5,5] },
+              ]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { title: { display: true, text: '进出水水质趋势', font: { size: 12 } } }, scales: { y: { title: { display: true, text: 'mg/L' } }, x: { ticks: { maxTicksLimit: 8 } } } }
+          });
+
+          const slData = data.charts.sludge || [];
+          chartInstances.dosing2 = new Chart(ctx2, {
+            type: 'line',
+            data: {
+              labels: slData.map(d => d.date),
+              datasets: [
+                { label: 'SV30(%)', data: slData.map(d => d.sv30), borderColor: '#ff4d4f', tension: 0.3, yAxisID: 'y' },
+                { label: 'SVI(mL/g)', data: slData.map(d => d.svi), borderColor: '#fa8c16', tension: 0.3, yAxisID: 'y1' },
+                { label: 'MLSS(×100mg/L)', data: slData.map(d => d.mlss ? d.mlss / 100 : null), borderColor: '#1890ff', tension: 0.3, yAxisID: 'y' },
+              ]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { title: { display: true, text: '污泥指标趋势', font: { size: 12 } } }, scales: { y: { title: { display: true, text: 'SV30(%) / MLSS(×100)' } }, y1: { position: 'right', title: { display: true, text: 'SVI(mL/g)' }, grid: { drawOnChartArea: false } }, x: { ticks: { maxTicksLimit: 8 } } } }
+          });
+        }, 300);
+      }
+    }
+
+    // ==================== 工具页 ====================
+    function renderTools() {
+      const page = document.getElementById('page-tools');
+      let html = '<div class="page-header"><h2>智能工具</h2></div>';
+      html += '<div class="fill-grid">';
+      html += '<div class="fill-entry" onclick="openDosingModal()"><div class="fe-icon">🧮</div><div class="fe-title">智能加药</div><div class="fe-count">6种药剂推荐</div></div>';
+      html += '<div class="fill-entry" onclick="openInventory()"><div class="fe-icon">📦</div><div class="fe-title">库存管理</div><div class="fe-count">实时库存监控</div></div>';
+      html += '<div class="fill-entry" onclick="openAlerts()"><div class="fe-icon">⚠️</div><div class="fe-title">预警中心</div><div class="fe-count">异常数据追溯</div></div>';
+      html += '<div class="fill-entry" onclick="openStream()"><div class="fe-icon">📡</div><div class="fe-title">信息动态</div><div class="fe-count">实时滚动</div></div>';
+      html += '<div class="fill-entry" onclick="openExport()"><div class="fe-icon">📤</div><div class="fe-title">数据导出</div><div class="fe-count">Excel报表</div></div>';
+      html += '<div class="fill-entry" onclick="openTasks()"><div class="fe-icon">📝</div><div class="fe-title">任务管理</div><div class="fe-count">待办跟踪</div></div>';
+      html += '<div class="fill-entry" onclick="openSludgeAnalysis()"><div class="fe-icon">🦠</div><div class="fe-title">污泥综合分析</div><div class="fe-count">SV30/MLSS/SVI</div></div>';
+      html += '<div class="fill-entry" onclick="openSludgeQA()"><div class="fe-icon">💬</div><div class="fe-title">数据问答</div><div class="fe-count">智能分析</div></div>';
+      if (currentPermissions.canManage) {
+        html += '<div class="fill-entry" onclick="openUsers()"><div class="fe-icon">👥</div><div class="fe-title">用户管理</div><div class="fe-count">权限管控</div></div>';
+      }
+      html += '</div>';
+      page.innerHTML = html;
+    }
+
+    async function openInventory() {
+      try {
+        const res = await fetch(API + '/api/inventory/summary', { headers: authHeaders() });
+        const data = await res.json();
+        let html = '<div class="modal-header"><h3>📦 药剂库存</h3><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body">';
+        data.forEach(item => {
+          const pct = Math.min(100, Math.max(0, item.balance / Math.max(item.totalIn || 1, 2000) * 100));
+          const barColor = item.status === 'danger' ? '#f5222d' : item.status === 'warning' ? '#faad14' : '#52c41a';
+          html += '<div class="inv-item" style="flex-direction:column;align-items:stretch;"><div class="flex-between"><div class="inv-name">' + item.name + '</div><div class="inv-balance" style="color:' + barColor + '">' + item.balance.toFixed(0) + ' <span style="font-size:11px;">kg</span></div></div>';
+          html += '<div class="inv-bar"><div class="inv-bar-fill" style="width:' + pct + '%;background:' + barColor + ';"></div></div>';
+          html += '<div class="inv-meta">入库 ' + item.totalIn.toFixed(0) + 'kg | 消耗 ' + (item.totalUse || 0).toFixed(0) + 'kg | ' + (item.status === 'danger' ? '⚠️库存严重不足' : item.status === 'warning' ? '⚡库存偏低' : '✅正常') + '</div></div>';
+        });
+        html += '</div><div class="modal-footer"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+        openModal(html);
+      } catch (e) { toast('加载失败', 'error'); }
+    }
+
+    async function openAlerts() {
+      try {
+        const res = await fetch(API + '/api/alerts/active', { headers: authHeaders() });
+        const alerts = await res.json();
+        let html = '<div class="modal-header"><h3>⚠️ 预警中心 (' + alerts.length + '条活跃)</h3><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body">';
+        if (alerts.length === 0) html += '<div class="empty">暂无活跃预警</div>';
+        else alerts.forEach(a => {
+          html += '<div class="alert-item"><div class="al-icon">' + (a.level === 'high' ? '🚨' : '⚠️') + '</div><div class="al-body"><div class="al-title">' + a.title + '</div><div class="al-detail">' + a.detail + '</div><div class="al-meta"><span class="tl-tag 异常">' + a.type + '</span><span>' + (a.source || '') + '</span></div></div></div>';
+        });
+        html += '</div><div class="modal-footer"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+        openModal(html);
+      } catch (e) { toast('加载失败', 'error'); }
+    }
+
+    async function openStream() {
+      try {
+        const res = await fetch(API + '/api/stream', { headers: authHeaders() });
+        const data = await res.json();
+        let html = '<div class="modal-header"><h3>📡 信息动态</h3><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body">';
+        (data.items || []).forEach(item => {
+          const timeStr = item.time ? new Date(item.time).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+          html += '<div class="timeline-item ' + item.type + '"><div class="tl-icon">' + item.icon + '</div><div class="tl-body"><div class="tl-title">' + item.title + '</div><div class="tl-detail">' + item.detail + '</div><div class="tl-meta"><span class="tl-tag ' + item.type + (item.level === 'high' ? ' high' : '') + '">' + (item.tag || item.type) + '</span><span>' + timeStr + '</span></div></div></div>';
+        });
+        html += '</div><div class="modal-footer"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+        openModal(html);
+      } catch (e) { toast('加载失败', 'error'); }
+    }
+
+    function openExport() {
+      let html = '<div class="modal-header"><h3>📤 数据导出</h3><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body">';
+      html += '<p style="font-size:13px;color:#666;margin-bottom:12px;">选择要导出的数据类型：</p><div class="export-types">';
+      [
+        { key: 'do_inspection', name: 'DO巡检', icon: '🔍' },
+        { key: 'hourly_water', name: '小时进出水', icon: '💧' },
+        { key: 'daily_lab', name: '每日化验', icon: '🧫' },
+        { key: 'weekly_lab', name: '每周化验', icon: '📅' },
+        { key: 'dewatering', name: '脱泥生产', icon: '🔄' },
+        { key: 'chemical_dosing', name: '药剂投加', icon: '🧪' },
+        { key: 'chemical_inventory', name: '库存台账', icon: '📦' },
+        { key: 'alerts', name: '预警记录', icon: '⚠️' },
+        { key: 'tasks', name: '任务列表', icon: '📝' },
+      ].forEach(t => {
+        html += '<div class="export-type" onclick="exportTable(\'' + t.key + '\')"><span>' + t.icon + '</span>' + t.name + '</div>';
+      });
+      html += '</div></div><div class="modal-footer"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+      openModal(html);
+    }
+
+    // ==================== 污泥综合分析 (SV30/MLSS/SVI/镜检) ====================
+    async function openSludgeAnalysis() {
+      let html = '<div class="modal-header"><h3>🦠 污泥指标综合分析</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+      html += '<div class="modal-body"><div class="loading" id="sludgeLoading">加载中...</div><div id="sludgeContent"></div></div>';
+      html += '<div class="modal-footer"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+      openModal(html);
+
+      try {
+        const res = await fetch(API + '/api/sludge/analysis?range=30', { headers: authHeaders() });
+        const data = await res.json();
+        let content = '';
+
+        // 诊断报告
+        if (data.diagnosis && data.diagnosis.length > 0) {
+          content += '<div class="card mb-12"><div class="card-header"><h3>📋 综合诊断报告</h3></div><div class="card-body no-padding">';
+          data.diagnosis.forEach(d => {
+            const levelCls = d.level === 'high' ? 'danger' : d.level === 'warning' ? 'warning' : d.level === 'info' ? 'primary' : 'success';
+            const levelIcon = d.level === 'high' ? '🚨' : d.level === 'warning' ? '⚠️' : d.level === 'info' ? 'ℹ️' : '✅';
+            content += '<div class="alert-item"><div class="al-icon">' + levelIcon + '</div><div class="al-body"><div class="al-title" style="color:var(--' + levelCls + ')">' + d.item + '</div><div class="al-detail">' + d.detail + '</div></div></div>';
+          });
+          content += '</div></div>';
+        }
+
+        // SV30/MLSS/SVI 三指标卡片
+        const cards = [
+          { key: 'sv30', label: 'SV30', unit: '%', data: data.sv30, normal: '15-35%', color: '#e74c3c' },
+          { key: 'svi', label: 'SVI', unit: 'mL/g', data: data.svi, normal: '50-150mL/g', color: '#f39c12' },
+          { key: 'mlss', label: 'MLSS', unit: 'mg/L', data: data.mlss, normal: '2000-6000mg/L', color: '#3498db' },
+        ];
+        content += '<div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr;">';
+        cards.forEach(c => {
+          const trendIcon = c.data.trend === '上升' ? '📈' : c.data.trend === '下降' ? '📉' : '➡️';
+          const statusCls = c.data.anomalyDays > 3 ? 'danger' : c.data.anomalyDays > 0 ? 'warning' : 'success';
+          content += '<div class="stat-card ' + statusCls + '" style="text-align:center;"><div style="font-size:11px;color:#8c8c8c;">' + c.label + '</div><div class="stat-value" style="color:' + c.color + '">' + (c.data.avg || '-') + '</div><div style="font-size:10px;color:#8c8c8c;">' + c.unit + '</div><div style="font-size:10px;margin-top:4px;">' + trendIcon + ' ' + c.data.trend + '</div><div style="font-size:9px;color:var(--' + statusCls + ');">异常' + c.data.anomalyDays + '天</div><div style="font-size:9px;color:#bfbfbf;">正常：' + c.normal + '</div></div>';
+        });
+        content += '</div>';
+
+        // 膨胀风险评估
+        const riskColor = data.bulkingRisk === '高风险' ? '#f5222d' : data.bulkingRisk === '中等风险' ? '#faad14' : '#52c41a';
+        content += '<div class="card mb-12"><div class="card-header"><h3>⚡ 污泥膨胀风险评估</h3></div><div class="card-body">';
+        content += '<div style="text-align:center;margin-bottom:8px;"><span style="display:inline-block;padding:6px 16px;border-radius:16px;font-size:14px;font-weight:700;background:' + riskColor + '20;color:' + riskColor + ';">' + data.bulkingRisk + '</span></div>';
+        content += '<p style="font-size:13px;color:#595959;line-height:1.8;">' + data.bulkingAdvice + '</p>';
+        content += '</div></div>';
+
+        // 东西系列对比
+        if (data.seriesComparison && data.seriesComparison.eastSV30Avg !== null) {
+          content += '<div class="card mb-12"><div class="card-header"><h3>🔀 东西系列SV30对比</h3></div><div class="card-body">';
+          content += '<div style="display:flex;gap:8px;"><div style="flex:1;text-align:center;background:#e6f7ff;border-radius:8px;padding:12px;"><div style="font-size:11px;color:#8c8c8c;">东系列</div><div style="font-size:22px;font-weight:700;color:#1890ff;">' + data.seriesComparison.eastSV30Avg + '%</div></div>';
+          content += '<div style="flex:1;text-align:center;background:#fff7e6;border-radius:8px;padding:12px;"><div style="font-size:11px;color:#8c8c8c;">西系列</div><div style="font-size:22px;font-weight:700;color:#fa8c16;">' + data.seriesComparison.westSV30Avg + '%</div></div></div>';
+          const diff = Math.abs((data.seriesComparison.eastSV30Avg || 0) - (data.seriesComparison.westSV30Avg || 0));
+          content += '<div style="text-align:center;margin-top:8px;font-size:12px;color:' + (diff > 5 ? '#f5222d' : '#52c41a') + ';">差异 ' + diff.toFixed(1) + '% | ' + (diff > 5 ? '⚠️ 差异较大，需排查' : '✅ 运行均衡') + '</div>';
+          content += '</div></div>';
+        }
+
+        // 镜检关键词
+        if (data.microscope && data.microscope.keywordStats) {
+          const kw = data.microscope.keywordStats;
+          const totalKw = Object.values(kw).reduce((a,b) => a+b, 0);
+          if (totalKw > 0) {
+            content += '<div class="card mb-12"><div class="card-header"><h3>🔬 镜检关键词统计</h3></div><div class="card-body">';
+            const kwList = Object.entries(kw).filter(([,v]) => v > 0).sort((a,b) => b[1]-a[1]);
+            content += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+            kwList.forEach(([k, v]) => {
+              const ratio = v / totalKw;
+              const size = 11 + ratio * 8;
+              content += '<span style="font-size:' + size + 'px;padding:4px 8px;background:#f0f5ff;border-radius:12px;color:#1890ff;font-weight:500;">' + k + '(' + v + ')</span>';
+            });
+            content += '</div></div></div>';
+          }
+
+          // 最近镜检记录
+          if (data.microscope.records && data.microscope.records.length > 0) {
+            content += '<div class="card mb-12"><div class="card-header"><h3>📝 最近镜检记录</h3></div><div class="card-body no-padding">';
+            data.microscope.records.slice(-5).reverse().forEach(r => {
+              content += '<div class="inv-item" style="flex-direction:column;align-items:flex-start;"><div style="font-size:13px;font-weight:600;">' + r.date + '</div><div style="font-size:12px;color:#595959;margin-top:4px;">' + (r.record || '无记录') + '</div><div style="font-size:11px;color:#8c8c8c;margin-top:2px;">SV30: ' + (r.sv30 || '-') + '% | SVI: ' + (r.svi || '-') + ' | MLSS: ' + (r.mlss || '-') + 'mg/L</div></div>';
+            });
+            content += '</div></div>';
+          }
+        }
+
+        document.getElementById('sludgeLoading').classList.add('hidden');
+        document.getElementById('sludgeContent').innerHTML = content;
+      } catch (e) {
+        document.getElementById('sludgeLoading').innerHTML = '<div class="empty">加载失败：' + e.message + '</div>';
+      }
+    }
+
+    // ==================== 数据问答 ====================
+    function openSludgeQA() {
+      let html = '<div class="modal-header"><h3>💬 污泥数据智能问答</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+      html += '<div class="modal-body">';
+      html += '<p style="font-size:12px;color:#8c8c8c;margin-bottom:8px;">💡 可问：SV30趋势、SVI超标、MLSS是否正常、污泥膨胀风险、镜检丝状菌、东西系列对比、水温、回流比等</p>';
+      html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;" id="qaSuggestions">';
+      ['SV30最近趋势如何？', 'SVI有没有超标？', 'MLSS是否偏低？', '污泥膨胀风险评估', '镜检中丝状菌情况', '东西系列SV30对比', '最近水温变化'].forEach(q => {
+        html += '<span class="filter-chip" onclick="askSludgeQA(\'' + q + '\')" style="cursor:pointer;">' + q + '</span>';
+      });
+      html += '</div>';
+      html += '<div style="display:flex;gap:8px;"><input id="qaInput" type="text" placeholder="输入你的问题..." style="flex:1;height:40px;border:1px solid #d9d9d9;border-radius:6px;padding:0 10px;font-size:14px;" onkeydown="if(event.key===\'Enter\')askSludgeQA()"><button class="btn btn-primary" onclick="askSludgeQA()">提问</button></div>';
+      html += '<div id="qaResult" style="margin-top:12px;"></div>';
+      html += '</div><div class="modal-footer"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+      openModal(html);
+    }
+
+    async function askSludgeQA(question) {
+      const q = question || document.getElementById('qaInput').value.trim();
+      if (!q) return;
+      document.getElementById('qaResult').innerHTML = '<div class="loading">思考中...</div>';
+      try {
+        const res = await fetch(API + '/api/sludge/qa?q=' + encodeURIComponent(q), { headers: authHeaders() });
+        const data = await res.json();
+        let html = '<div class="card"><div class="card-header"><h3>❓ ' + data.question + '</h3></div><div class="card-body">';
+        html += '<div style="font-size:14px;line-height:1.8;white-space:pre-wrap;">' + data.answer + '</div>';
+        html += '<div style="font-size:10px;color:#bfbfbf;margin-top:8px;">回答时间：' + new Date(data.answerTime).toLocaleString('zh-CN') + '</div>';
+        html += '</div></div>';
+
+        // 如果有数据点，画小图
+        if (data.dataPoints && data.dataPoints.length > 1 && data.dataPoints[0].value !== undefined) {
+          html += '<div class="card mt-8"><div class="card-body"><div class="chart-container" style="height:200px;"><canvas id="qaChart"></canvas></div></div></div>';
+          setTimeout(() => {
+            const ctx = document.getElementById('qaChart');
+            if (!ctx) return;
+            if (chartInstances.qa) chartInstances.qa.destroy();
+            const labels = data.dataPoints.map(d => d.date.slice(5));
+            const values = data.dataPoints.map(d => d.value);
+            chartInstances.qa = new Chart(ctx, {
+              type: 'line',
+              data: { labels, datasets: [{ label: q.includes('SV30')||q.includes('sv30') ? 'SV30(%)' : q.includes('SVI')||q.includes('svi') ? 'SVI(mL/g)' : q.includes('MLSS')||q.includes('mlss') ? 'MLSS(mg/L)' : '数值', data: values, borderColor: '#1890ff', tension: 0.3, fill: false }] },
+              options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { font: { size: 10 } } }, x: { ticks: { font: { size: 10 }, maxTicksLimit: 10 } } }, interaction: { intersect: false, mode: 'index' } }
+            });
+          }, 200);
+        }
+
+        document.getElementById('qaResult').innerHTML = html;
+      } catch (e) {
+        document.getElementById('qaResult').innerHTML = '<div class="empty">查询失败：' + e.message + '</div>';
+      }
+    }
+
+    async function openTasks() {
+      try {
+        const res = await fetch(API + '/api/tasks', { headers: authHeaders() });
+        const data = await res.json();
+        const tasks = data.data || data;
+        let html = '<div class="modal-header"><h3>📝 任务管理</h3><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body"><div class="table-wrapper"><table><thead><tr><th>任务</th><th>类型</th><th>优先级</th><th>状态</th><th>负责人</th></tr></thead><tbody>';
+        (tasks || []).forEach(t => {
+          const pBadge = t.priority === '高' ? 'badge-danger' : t.priority === '中' ? 'badge-warning' : 'badge-info';
+          const sBadge = t.status === '已完成' ? 'badge-success' : t.status === '处理中' ? 'badge-warning' : 'badge-info';
+          html += '<tr><td><b>' + t.title + '</b></td><td>' + t.type + '</td><td><span class="badge ' + pBadge + '">' + t.priority + '</span></td><td><span class="badge ' + sBadge + '">' + t.status + '</span></td><td>' + (t.assignedTo || '-') + '</td></tr>';
+        });
+        html += '</tbody></table></div></div><div class="modal-footer"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+        openModal(html);
+      } catch (e) { toast('加载失败', 'error'); }
+    }
+
+    async function openUsers() {
+      try {
+        const res = await fetch(API + '/api/users', { headers: authHeaders() });
+        const data = await res.json();
+        const users = data.data || data;
+        let html = '<div class="modal-header"><h3>👥 用户管理</h3><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body"><div class="table-wrapper"><table><thead><tr><th>姓名</th><th>用户名</th><th>角色</th><th>班组</th><th>状态</th></tr></thead><tbody>';
+        (users || []).forEach(u => {
+          html += '<tr><td>' + u.name + '</td><td>' + u.username + '</td><td>' + u.role + '</td><td>' + (u.groupId || '-') + '</td><td>' + (u.status === 'active' ? '✅启用' : '❌禁用') + '</td></tr>';
+        });
+        html += '</tbody></table></div></div><div class="modal-footer"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+        openModal(html);
+      } catch (e) { toast('加载失败', 'error'); }
+    }
+
+    // ==================== 我的 ====================
+    function renderMe() {
+      const page = document.getElementById('page-me');
+      let html = '<div class="page-header"><h2>个人中心</h2></div>';
+      html += '<div class="card"><div class="card-body">';
+      html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;"><div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#1890ff,#096dd9);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;">' + (currentUser.name || '?')[0] + '</div><div><div style="font-size:16px;font-weight:600;">' + currentUser.name + '</div><div style="font-size:12px;color:#8c8c8c;">' + currentUser.role + (currentUser.groupId ? ' · ' + currentUser.groupId : '') + '</div></div></div>';
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center;"><div><div style="font-size:20px;font-weight:700;">' + (currentUser.phone || '-') + '</div><div style="font-size:11px;color:#8c8c8c;">手机号</div></div><div><div style="font-size:20px;font-weight:700;">' + currentUser.username + '</div><div style="font-size:11px;color:#8c8c8c;">用户名</div></div><div><div style="font-size:20px;font-weight:700;color:' + (currentPermissions.canManage ? '#52c41a' : '#8c8c8c') + ';">' + (currentPermissions.canManage ? '是' : '否') + '</div><div style="font-size:11px;color:#8c8c8c;">管理权限</div></div></div>';
+      html += '</div></div>';
+      html += '<div class="card mt-12"><div class="card-body" style="padding:0;"><div class="inv-item" onclick="switchTab(\'fill\')"><span>📝 数据填报</span><span style="color:#8c8c8c;">→</span></div><div class="inv-item" onclick="switchTab(\'data\')"><span>📊 数据查询</span><span style="color:#8c8c8c;">→</span></div><div class="inv-item" onclick="switchTab(\'tools\')"><span>⚙️ 智能工具</span><span style="color:#8c8c8c;">→</span></div></div></div>';
+      html += '<div class="card mt-12"><div class="card-body" style="padding:0;"><div class="inv-item" onclick="doLogout()"><span style="color:#f5222d;">🚪 退出登录</span><span style="color:#f5222d;">→</span></div></div></div>';
+      html += '<div style="text-align:center;margin-top:24px;font-size:11px;color:#bfbfbf;">污水处理厂运行管理系统 v3.0<br>智慧水务 · 精准管控</div>';
+      page.innerHTML = html;
+    }
+
+    function doLogout() {
+      localStorage.removeItem('sb_token');
+      localStorage.removeItem('sb_user');
+      window.location.href = '/login.html';
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</body>
+</html>

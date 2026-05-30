@@ -1,0 +1,6 @@
+node_modules/
+*.log
+npm-debug.log*
+sewage_data.json
+.env
+.DS_Store

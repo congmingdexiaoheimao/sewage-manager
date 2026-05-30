@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>污水处理厂运行管理系统</title>
+  <link rel="stylesheet" href="style.css?v=4">
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-logo">🏭</div>
+    <div class="login-title">污水处理厂运行管理</div>
+    <div class="login-subtitle">智慧水务 · 精准管控</div>
+    <div class="login-card">
+      <div class="form-group">
+        <label>用户名</label>
+        <input type="text" id="loginUser" placeholder="请输入用户名" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label>密码</label>
+        <input type="password" id="loginPass" placeholder="请输入密码" autocomplete="current-password">
+      </div>
+      <button class="login-btn" onclick="doLogin()">登 录</button>
+    </div>
+    <div class="login-hint">
+      演示账号：admin / admin123（厂长）<br>
+      运营班组：yyb01a / 123456 ｜ 化验员：hy01 / 123456
+    </div>
+  </div>
+
+  <script>
+    const API = window.location.origin;
+
+    async function doLogin() {
+      const username = document.getElementById('loginUser').value.trim();
+      const password = document.getElementById('loginPass').value.trim();
+      if (!username || !password) { alert('请输入用户名和密码'); return; }
+      try {
+        const res = await fetch(API + '/api/auth/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (data.token) {
+          localStorage.setItem('sb_token', data.token);
+          localStorage.setItem('sb_user', JSON.stringify(data.user));
+          window.location.href = '/index.html';
+        } else {
+          alert(data.error || '登录失败');
+        }
+      } catch (e) { alert('网络错误，请检查服务是否启动'); }
+    }
+
+    document.getElementById('loginPass').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') doLogin();
+    });
+  </script>
+</body>
+</html>
