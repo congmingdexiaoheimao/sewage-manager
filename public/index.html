@@ -16,9 +16,12 @@
         <button class="sidebar-item" data-tab="fill"><span class="si-icon">📝</span>数据填报</button>
         <button class="sidebar-item" data-tab="data"><span class="si-icon">📊</span>数据查询</button>
         <button class="sidebar-item" data-tab="tools"><span class="si-icon">⚙️</span>智能工具</button>
+        <button class="sidebar-item" data-tab="equipment"><span class="si-icon">🔧</span>设备台账</button>
+        <button class="sidebar-item" data-tab="shift"><span class="si-icon">🔄</span>交班排班</button>
+        <button class="sidebar-item" data-tab="report"><span class="si-icon">📋</span>报表中心</button>
         <button class="sidebar-item" data-tab="me"><span class="si-icon">👤</span>个人中心</button>
       </nav>
-      <div class="sidebar-footer">v4.4 智慧水务</div>
+      <div class="sidebar-footer">v4.5 智慧水务</div>
     </div>
 
     <!-- Header -->
@@ -35,6 +38,9 @@
     <div id="page-fill" class="page"></div>
     <div id="page-data" class="page"></div>
     <div id="page-tools" class="page"></div>
+    <div id="page-equipment" class="page"></div>
+    <div id="page-shift" class="page"></div>
+    <div id="page-report" class="page"></div>
     <div id="page-me" class="page"></div>
 
     <!-- Bottom Tab Bar -->
@@ -43,6 +49,9 @@
       <button class="tab-item" data-tab="fill"><span class="tab-icon">📝</span>填报</button>
       <button class="tab-item" data-tab="data"><span class="tab-icon">📊</span>数据</button>
       <button class="tab-item" data-tab="tools"><span class="tab-icon">⚙️</span>工具</button>
+      <button class="tab-item" data-tab="equipment"><span class="tab-icon">🔧</span>设备</button>
+      <button class="tab-item" data-tab="shift"><span class="tab-icon">🔄</span>交班</button>
+      <button class="tab-item" data-tab="report"><span class="tab-icon">📋</span>报表</button>
       <button class="tab-item" data-tab="me" style="position:relative;"><span class="tab-icon">👤</span>我的<span class="tab-badge hidden" id="tabAlertBadge">0</span></button>
     </div>
 
@@ -146,7 +155,7 @@
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       document.getElementById('page-' + tab).classList.add('active');
 
-      const titles = { home: '🏭 污水厂运行管理', fill: '📝 数据填报', data: '📊 数据查询', tools: '⚙️ 智能工具', me: '👤 个人中心' };
+      const titles = { home: '🏭 污水厂运行管理', fill: '📝 数据填报', data: '📊 数据查询', tools: '⚙️ 智能工具', equipment: '🔧 设备台账', shift: '🔄 交班排班', report: '📋 报表中心', me: '👤 个人中心' };
       document.getElementById('headerTitle').textContent = titles[tab] || '污水厂运行管理';
 
       switch (tab) {
@@ -154,6 +163,9 @@
         case 'fill': renderFill(); break;
         case 'data': renderData(); break;
         case 'tools': renderTools(); break;
+        case 'equipment': renderEquipment(); break;
+        case 'shift': renderShift(); break;
+        case 'report': renderReport(); break;
         case 'me': renderMe(); break;
       }
     }
@@ -305,15 +317,15 @@
           fields: [
             { section: '基本信息' },
             { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
-            { name: 'shift', label: '班次', type: 'select', options: ['早班','中班','晚班'], required: true },
+            { name: 'shift', label: '班次', type: 'select', options: ['白班','夜班'], required: true },
             { name: 'series', label: '系列', type: 'select', options: ['east','west'], labels: ['东系列','西系列'], required: true },
             { section: '溶解氧数值 (mg/L)' },
-            { name: 'anaerobic', label: '厌氧池 DO', type: 'number', step: '0.01', placeholder: '<0.20预警' },
-            { name: 'anoxic', label: '缺氧池 DO', type: 'number', step: '0.01', placeholder: '<0.50预警' },
-            { name: 'aerobic1', label: '好氧池1 DO', type: 'number', step: '0.01', placeholder: '1.50-3.00' },
-            { name: 'aerobic2', label: '好氧池2 DO', type: 'number', step: '0.01', placeholder: '1.50-3.00' },
-            { name: 'aerobic3', label: '好氧池3 DO', type: 'number', step: '0.01', placeholder: '2.00-3.50' },
-            { name: 'aerobic4', label: '好氧池4 DO', type: 'number', step: '0.01', placeholder: '2.00-3.50' },
+            { name: 'anaerobic', label: '厌氧池 DO', type: 'number', step: '0.01', placeholder: '需<0.2 mg/L' },
+            { name: 'anoxic', label: '缺氧池 DO', type: 'number', step: '0.01', placeholder: '需<0.5 mg/L' },
+            { name: 'aerobic1', label: '好氧池1 DO', type: 'number', step: '0.01', placeholder: '正常2.5-4.5 mg/L' },
+            { name: 'aerobic2', label: '好氧池2 DO', type: 'number', step: '0.01', placeholder: '正常2.5-4.5 mg/L' },
+            { name: 'aerobic3', label: '好氧池3 DO', type: 'number', step: '0.01', placeholder: '正常2.5-4.5 mg/L' },
+            { name: 'aerobic4', label: '好氧池4 DO', type: 'number', step: '0.01', placeholder: '正常2.5-4.5 mg/L' },
             { name: 'remark', label: '备注', type: 'textarea', placeholder: '异常情况说明...' },
           ]
         },
@@ -404,7 +416,7 @@
           title: '药剂投加记录',
           fields: [
             { name: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0,10) },
-            { name: 'shift', label: '班次', type: 'select', options: ['早班','中班','晚班'], required: true },
+            { name: 'shift', label: '班次', type: 'select', options: ['白班','夜班'], required: true },
             { section: '投加量 (kg)' },
             { name: 'carbonSource', label: '碳源 (kg)', type: 'number', step: '0.1' },
             { name: 'glucose', label: '葡萄糖 (kg)', type: 'number', step: '0.1' },
@@ -766,9 +778,9 @@
           const isExceed = s.exceedCount > 0;
           const cls = isExceed ? 'danger' : 'success';
           let thresholdText = '';
-          if (key === 'anaerobic') thresholdText = '上限' + s.threshold;
-          else if (key === 'anoxic') thresholdText = '上限' + s.threshold;
-          else thresholdText = s.upperLimit ? s.threshold + '~' + s.upperLimit : '≥' + s.threshold;
+          if (key === 'anaerobic') thresholdText = '需<0.2 mg/L';
+          else if (key === 'anoxic') thresholdText = '需<0.5 mg/L';
+          else thresholdText = s.upperLimit ? s.threshold + '~' + s.upperLimit + ' mg/L' : '≥' + s.threshold;
 
           html += '<div class="trend-stat-item ' + cls + '">';
           html += '<div class="ts-label">' + name + '</div>';
@@ -1576,6 +1588,677 @@
       localStorage.removeItem('sb_user');
       window.location.href = '/login.html';
     }
+
+    // ==================== 设备台账管理 ====================
+    async function renderEquipment() {
+      const page = document.getElementById('page-equipment');
+      page.innerHTML = '<div class="loading" style="padding:40px;text-align:center;">加载中...</div>';
+      try {
+        const [statsRes, listRes] = await Promise.all([
+          fetch(API + '/api/equipment/stats', { headers: authHeaders() }),
+          fetch(API + '/api/equipment/list?', { headers: authHeaders() })
+        ]);
+        const stats = await statsRes.json();
+        const listData = await listRes.json();
+        const list = listData.data || [];
+
+        let html = '<div class="page-header"><h2>🔧 设备台账管理</h2></div>';
+
+        // 统计卡片
+        html += '<div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px;">';
+        html += '<div class="stat-card"><div style="font-size:11px;color:#8c8c8c;">设备总数</div><div class="stat-value" style="color:#1890ff;">' + (stats.total || 0) + '</div><div style="font-size:10px;">台</div></div>';
+        html += '<div class="stat-card ' + (stats.fault > 0 ? 'danger' : 'success') + '"><div style="font-size:11px;color:#8c8c8c;">故障停机</div><div class="stat-value" style="color:' + (stats.fault > 0 ? '#f5222d' : '#52c41a') + ';">' + (stats.fault || 0) + '</div><div style="font-size:10px;">台</div></div>';
+        html += '<div class="stat-card ' + (stats.urgentWork > 0 ? 'danger' : 'success') + '"><div style="font-size:11px;color:#8c8c8c;">紧急工单</div><div class="stat-value" style="color:' + (stats.urgentWork > 0 ? '#f5222d' : '#52c41a') + ';">' + (stats.urgentWork || 0) + '</div><div style="font-size:10px;">条</div></div>';
+        html += '</div>';
+
+        // 快捷操作
+        html += '<div class="card mb-12"><div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;">';
+        html += '<button class="btn btn-primary" onclick="openAddEquipment()">➕ 新增设备</button>';
+        html += '<button class="btn btn-outline" onclick="openMaintenanceList()">🔨 维修工单列表</button>';
+        html += '<button class="btn btn-outline" onclick="openAddMaintenance()">📋 新建维修工单</button>';
+        html += '</div></div>';
+
+        // 设备列表
+        html += '<div class="card"><div class="card-header"><h3>📋 设备清单</h3></div>';
+        if (list.length === 0) {
+          html += '<div class="card-body"><div class="empty">暂无设备记录，点击"新增设备"开始录入</div></div>';
+        } else {
+          html += '<div class="card-body" style="padding:0;"><div class="table-wrapper"><table><thead><tr><th>设备名称</th><th>编号</th><th>位置</th><th>状态</th><th>待处理工单</th><th>操作</th></tr></thead><tbody>';
+          list.forEach(e => {
+            const statusColor = e.status === '正常运行' ? '#52c41a' : e.status === '故障停机' ? '#f5222d' : '#faad14';
+            const statusIcon = e.status === '正常运行' ? '✅' : e.status === '故障停机' ? '🔴' : '🟡';
+            html += '<tr>';
+            html += '<td><b>' + (e.name || '-') + '</b><div style="font-size:11px;color:#8c8c8c;">' + (e.type || '') + ' · ' + (e.manufacturer || '') + '</div></td>';
+            html += '<td>' + (e.code || '-') + '</td>';
+            html += '<td>' + (e.location || '-') + '</td>';
+            html += '<td><span style="color:' + statusColor + ';">' + statusIcon + ' ' + (e.status || '-') + '</span></td>';
+            html += '<td>' + (e.pendingMaintenance > 0 ? '<span style="color:#f5222d;font-weight:600;">' + e.pendingMaintenance + ' 条</span>' : '<span style="color:#52c41a;">0 条</span>') + '</td>';
+            html += '<td><button class="btn btn-outline" style="font-size:11px;padding:2px 8px;" onclick="openEquipmentDetail(\'' + e.id + '\',\'' + (e.name || '').replace(/'/g, "\\'") + '\')">详情</button> <button class="btn btn-outline" style="font-size:11px;padding:2px 8px;color:#ff4d4f;border-color:#ff4d4f;" onclick="openAddMaintenanceForEquip(\'' + e.id + '\',\'' + (e.name || '').replace(/'/g, "\\'") + '\')">报修</button></td>';
+            html += '</tr>';
+          });
+          html += '</tbody></table></div></div>';
+        }
+        html += '</div>';
+
+        page.innerHTML = html;
+      } catch (e) { page.innerHTML = '<div class="empty">加载失败：' + e.message + '</div>'; }
+    }
+
+    function openAddEquipment(data) {
+      const isEdit = !!data;
+      let html = '<div class="modal-header"><h3>' + (isEdit ? '✏️ 编辑设备' : '➕ 新增设备') + '</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+      html += '<form onsubmit="submitEquipment(event,\'' + (data ? data.id : '') + '\')"><div class="modal-body">';
+      html += '<div class="form-section">基本信息</div>';
+      html += '<div class="form-row"><div class="form-group"><label>设备名称 <span style="color:red">*</span></label><input type="text" name="name" required value="' + (data ? data.name || '' : '') + '" placeholder="如：1号鼓风机"></div>';
+      html += '<div class="form-group"><label>设备编号</label><input type="text" name="code" value="' + (data ? data.code || '' : '') + '" placeholder="如：BLW-001"></div></div>';
+      html += '<div class="form-row"><div class="form-group"><label>设备类型 <span style="color:red">*</span></label><select name="type" required><option value="">请选择</option>';
+      ['鼓风机','水泵','搅拌机','加药机','脱水机','在线仪表','变频器','风机','其他'].forEach(t => {
+        html += '<option value="' + t + '"' + (data && data.type === t ? ' selected' : '') + '>' + t + '</option>';
+      });
+      html += '</select></div>';
+      html += '<div class="form-group"><label>运行状态</label><select name="status"><option value="正常运行"' + (data && data.status === '正常运行' ? ' selected' : '') + '>✅ 正常运行</option><option value="检修中"' + (data && data.status === '检修中' ? ' selected' : '') + '>🟡 检修中</option><option value="故障停机"' + (data && data.status === '故障停机' ? ' selected' : '') + '>🔴 故障停机</option><option value="备用"' + (data && data.status === '备用' ? ' selected' : '') + '>⚪ 备用</option></select></div></div>';
+      html += '<div class="form-section">设备详情</div>';
+      html += '<div class="form-row"><div class="form-group"><label>生产厂家</label><input type="text" name="manufacturer" value="' + (data ? data.manufacturer || '' : '') + '"></div>';
+      html += '<div class="form-group"><label>型号规格</label><input type="text" name="model" value="' + (data ? data.model || '' : '') + '"></div></div>';
+      html += '<div class="form-row"><div class="form-group"><label>安装位置</label><input type="text" name="location" value="' + (data ? data.location || '' : '') + '" placeholder="如：1号曝气池东侧"></div>';
+      html += '<div class="form-group"><label>购置日期</label><input type="date" name="purchaseDate" value="' + (data ? data.purchaseDate || '' : '') + '"></div></div>';
+      html += '<div class="form-row"><div class="form-group"><label>安装日期</label><input type="date" name="installDate" value="' + (data ? data.installDate || '' : '') + '"></div>';
+      html += '<div class="form-group"><label>保修到期</label><input type="date" name="warrantyExpire" value="' + (data ? data.warrantyExpire || '' : '') + '"></div></div>';
+      html += '<div class="form-group"><label>技术参数</label><textarea name="specs" rows="2" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;" placeholder="如：功率18.5kW，额定流量8000m³/h">' + (data ? data.specs || '' : '') + '</textarea></div>';
+      html += '<div class="form-group"><label>备注</label><textarea name="remark" rows="2" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;">' + (data ? data.remark || '' : '') + '</textarea></div>';
+      html += '</div><div class="modal-footer"><button type="button" class="btn btn-outline" onclick="closeModal()">取消</button><button type="submit" class="btn btn-primary">' + (isEdit ? '保存修改' : '确认添加') + '</button></div></form>';
+      openModal(html);
+    }
+
+    async function submitEquipment(e, existingId) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const record = {};
+      for (const [k, v] of fd.entries()) if (v !== '') record[k] = v;
+      try {
+        const method = existingId ? 'PUT' : 'POST';
+        const url = existingId ? API + '/api/equipment/' + existingId : API + '/api/equipment';
+        const res = await fetch(url, { method, headers: authHeaders(), body: JSON.stringify(record) });
+        const data = await res.json();
+        if (data.success) { toast(existingId ? '设备信息已更新' : '设备添加成功'); closeModal(); renderEquipment(); }
+        else toast(data.error || '操作失败', 'error');
+      } catch (e) { toast('网络错误', 'error'); }
+    }
+
+    async function openEquipmentDetail(id, name) {
+      let html = '<div class="modal-header"><h3>🔧 ' + name + '</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+      html += '<div class="modal-body"><div id="equipDetailContent" class="loading">加载中...</div></div>';
+      html += '<div class="modal-footer"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+      openModal(html);
+      try {
+        const res = await fetch(API + '/api/equipment/' + id + '/detail', { headers: authHeaders() });
+        const data = await res.json();
+        let content = '';
+        // 基本信息
+        content += '<div class="card mb-8"><div class="card-header"><h3>📋 基本信息</h3></div><div class="card-body">';
+        content += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;">';
+        [['设备编号', data.code], ['设备类型', data.type], ['生产厂家', data.manufacturer], ['型号', data.model], ['安装位置', data.location], ['购置日期', data.purchaseDate], ['保修到期', data.warrantyExpire]].forEach(([k, v]) => {
+          content += '<div><span style="color:#8c8c8c;">' + k + '：</span>' + (v || '-') + '</div>';
+        });
+        content += '</div>';
+        if (data.specs) content += '<div style="margin-top:8px;font-size:13px;"><span style="color:#8c8c8c;">技术参数：</span>' + data.specs + '</div>';
+        content += '</div></div>';
+
+        // 最近维修记录
+        content += '<div class="card mb-8"><div class="card-header"><h3>🔨 维修记录 (' + (data.maintenances || []).length + ')</h3></div><div class="card-body no-padding">';
+        if (!data.maintenances || data.maintenances.length === 0) {
+          content += '<div class="empty" style="padding:16px;">暂无维修记录</div>';
+        } else {
+          (data.maintenances || []).slice(0, 5).forEach(m => {
+            const sc = m.status === '已完成' ? '#52c41a' : m.status === '处理中' ? '#1890ff' : '#faad14';
+            content += '<div class="inv-item" style="flex-direction:column;align-items:flex-start;">';
+            content += '<div style="display:flex;justify-content:space-between;width:100%;"><span style="font-size:13px;font-weight:600;">' + (m.type || '维修') + '：' + (m.faultDesc || '') + '</span><span style="font-size:12px;color:' + sc + ';">' + (m.status || '') + '</span></div>';
+            content += '<div style="font-size:11px;color:#8c8c8c;margin-top:2px;">报修人：' + (m.reportedBy || '-') + ' · ' + (m.reportedTime || '').slice(0, 10) + (m.assignedTo ? ' · 维修：' + m.assignedTo : '') + '</div>';
+            content += '</div>';
+          });
+        }
+        content += '</div></div>';
+
+        // 最近运行记录
+        content += '<div class="card"><div class="card-header"><h3>📊 最近运行记录 (' + (data.logs || []).length + ')</h3></div><div class="card-body no-padding">';
+        if (!data.logs || data.logs.length === 0) {
+          content += '<div class="empty" style="padding:16px;">暂无运行记录</div>';
+        } else {
+          (data.logs || []).slice(0, 5).forEach(l => {
+            const sc = l.runStatus === '正常' ? '#52c41a' : '#f5222d';
+            content += '<div class="inv-item" style="flex-direction:column;align-items:flex-start;">';
+            content += '<div style="display:flex;justify-content:space-between;width:100%;"><span style="font-size:13px;">' + (l.date || '') + ' ' + (l.shift || '') + '</span><span style="font-size:12px;color:' + sc + ';">' + (l.runStatus || '-') + '</span></div>';
+            content += '<div style="font-size:11px;color:#8c8c8c;margin-top:2px;">运行' + (l.operationHours || '-') + 'h' + (l.current ? ' · 电流' + l.current + 'A' : '') + (l.remark ? ' · ' + l.remark : '') + '</div>';
+            content += '</div>';
+          });
+        }
+        content += '</div></div>';
+
+        document.getElementById('equipDetailContent').innerHTML = content;
+        document.getElementById('equipDetailContent').className = '';
+      } catch (e) {
+        document.getElementById('equipDetailContent').innerHTML = '<div class="empty">加载失败：' + e.message + '</div>';
+      }
+    }
+
+    function openAddMaintenance(equipId, equipName) {
+      let html = '<div class="modal-header"><h3>📋 新建维修工单</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+      html += '<form onsubmit="submitMaintenance(event)"><div class="modal-body">';
+      html += '<div class="form-section">工单信息</div>';
+      html += '<div class="form-group"><label>关联设备名称 <span style="color:red">*</span></label><input type="text" name="equipmentName" required value="' + (equipName || '') + '" placeholder="设备名称"></div>';
+      html += '<div class="form-group"><label>设备ID</label><input type="text" name="equipmentId" value="' + (equipId || '') + '" placeholder="可选"></div>';
+      html += '<div class="form-row"><div class="form-group"><label>工单类型</label><select name="type"><option>故障维修</option><option>预防性维护</option><option>定期保养</option><option>紧急抢修</option></select></div>';
+      html += '<div class="form-group"><label>优先级</label><select name="priority"><option>普通</option><option>中</option><option>高</option><option>紧急</option></select></div></div>';
+      html += '<div class="form-group"><label>故障描述 <span style="color:red">*</span></label><textarea name="faultDesc" required rows="3" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;" placeholder="详细描述故障现象..."></textarea></div>';
+      html += '<div class="form-group"><label>指派维修人员</label><input type="text" name="assignedTo" placeholder="如：赵技术主管"></div>';
+      html += '<div class="form-group"><label>备注</label><textarea name="remark" rows="2" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;"></textarea></div>';
+      html += '</div><div class="modal-footer"><button type="button" class="btn btn-outline" onclick="closeModal()">取消</button><button type="submit" class="btn btn-primary">提交工单</button></div></form>';
+      openModal(html);
+    }
+
+    function openAddMaintenanceForEquip(equipId, equipName) { openAddMaintenance(equipId, equipName); }
+
+    async function submitMaintenance(e) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const record = {};
+      for (const [k, v] of fd.entries()) if (v !== '') record[k] = v;
+      try {
+        const res = await fetch(API + '/api/maintenance', { method: 'POST', headers: authHeaders(), body: JSON.stringify(record) });
+        const data = await res.json();
+        if (data.success) { toast('维修工单已创建'); closeModal(); renderEquipment(); }
+        else toast(data.error || '创建失败', 'error');
+      } catch (e) { toast('网络错误', 'error'); }
+    }
+
+    async function openMaintenanceList() {
+      let html = '<div class="modal-header"><h3>🔨 维修工单列表</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+      html += '<div class="modal-body"><div class="loading" id="maintListLoading">加载中...</div><div id="maintListContent"></div></div>';
+      html += '<div class="modal-footer"><button class="btn btn-primary" onclick="openAddMaintenance()">➕ 新建工单</button><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+      openModal(html);
+      try {
+        const res = await fetch(API + '/api/maintenance/list', { headers: authHeaders() });
+        const data = await res.json();
+        const list = data.data || [];
+        let content = '';
+        if (list.length === 0) {
+          content = '<div class="empty">暂无维修工单</div>';
+        } else {
+          content = '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
+          content += '<thead><tr style="background:#f0f5ff;"><th style="padding:8px;text-align:left;">设备</th><th style="padding:8px;text-align:left;">类型</th><th style="padding:8px;text-align:left;">故障</th><th style="padding:8px;text-align:left;">状态</th><th style="padding:8px;text-align:center;">操作</th></tr></thead><tbody>';
+          list.forEach(m => {
+            const sc = m.status === '已完成' ? '#52c41a' : m.status === '处理中' ? '#1890ff' : '#faad14';
+            const pc = m.priority === '紧急' || m.priority === '高' ? '#f5222d' : '#595959';
+            content += '<tr style="border-bottom:1px solid #f0f0f0;">';
+            content += '<td style="padding:8px;"><b>' + (m.equipmentName || '-') + '</b></td>';
+            content += '<td style="padding:8px;">' + (m.type || '-') + ' <span style="color:' + pc + ';font-size:11px;">[' + (m.priority || '') + ']</span></td>';
+            content += '<td style="padding:8px;font-size:12px;">' + (m.faultDesc || '').slice(0, 30) + '</td>';
+            content += '<td style="padding:8px;color:' + sc + ';">' + (m.status || '-') + '</td>';
+            content += '<td style="padding:8px;text-align:center;">';
+            if (m.status !== '已完成') {
+              content += '<button class="btn btn-outline" style="font-size:11px;padding:2px 8px;color:#1890ff;border-color:#1890ff;" onclick="updateMaintenanceStatus(\'' + m.id + '\',\'处理中\')">开始</button> ';
+              content += '<button class="btn btn-outline" style="font-size:11px;padding:2px 8px;color:#52c41a;border-color:#52c41a;" onclick="updateMaintenanceStatus(\'' + m.id + '\',\'已完成\')">完成</button>';
+            } else {
+              content += '<span style="color:#52c41a;font-size:12px;">✅ 已完成</span>';
+            }
+            content += '</td></tr>';
+          });
+          content += '</tbody></table></div>';
+        }
+        document.getElementById('maintListLoading').style.display = 'none';
+        document.getElementById('maintListContent').innerHTML = content;
+      } catch (e) {
+        document.getElementById('maintListLoading').innerHTML = '<div class="empty">加载失败：' + e.message + '</div>';
+      }
+    }
+
+    async function updateMaintenanceStatus(id, status) {
+      try {
+        const body = { status };
+        if (status === '处理中') body.startTime = new Date().toISOString();
+        if (status === '已完成') body.finishTime = new Date().toISOString();
+        const res = await fetch(API + '/api/maintenance/' + id, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) });
+        const data = await res.json();
+        if (data.success) { toast('工单状态已更新'); openMaintenanceList(); }
+        else toast(data.error || '更新失败', 'error');
+      } catch (e) { toast('网络错误', 'error'); }
+    }
+
+    // ==================== 交班/排班管理 ====================
+    async function renderShift() {
+      const page = document.getElementById('page-shift');
+      page.innerHTML = '<div class="loading" style="padding:40px;text-align:center;">加载中...</div>';
+      try {
+        const [weekRes, todayRes] = await Promise.all([
+          fetch(API + '/api/shift_schedule/week', { headers: authHeaders() }),
+          fetch(API + '/api/shift_handover/today', { headers: authHeaders() })
+        ]);
+        const weekData = await weekRes.json();
+        const todayHandover = await todayRes.json();
+        const schedules = weekData.data || [];
+        const handovers = todayHandover.data || [];
+
+        let html = '<div class="page-header"><h2>🔄 交班排班管理</h2></div>';
+
+        // 快捷操作
+        html += '<div class="card mb-12"><div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;">';
+        html += '<button class="btn btn-primary" onclick="openAddHandover()">📋 填写交班记录</button>';
+        html += '<button class="btn btn-outline" onclick="openAddSchedule()">📅 编辑排班</button>';
+        html += '<button class="btn btn-outline" onclick="openHandoverHistory()">📚 历史记录</button>';
+        html += '</div></div>';
+
+        // 今日交班状态
+        html += '<div class="card mb-12"><div class="card-header"><h3>📋 今日交班情况（' + todayHandover.date + '）</h3></div><div class="card-body">';
+        const shifts = ['白班', '夜班'];
+        const shiftIcons = { '白班': '☀️', '夜班': '🌙' };
+        html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">';
+        shifts.forEach(shift => {
+          const ho = handovers.find(h => h.shift === shift);
+          if (ho) {
+            html += '<div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:8px;padding:12px;">';
+            html += '<div style="font-size:13px;font-weight:600;">' + (shiftIcons[shift] || '') + ' ' + shift + ' <span style="color:#52c41a;font-size:11px;">✅已交班</span></div>';
+            html += '<div style="font-size:11px;color:#595959;margin-top:4px;">交班：' + (ho.handoverPerson || '-') + ' → ' + (ho.receivePerson || '-') + '</div>';
+            html += '<div style="font-size:11px;color:#8c8c8c;margin-top:2px;">状态：' + (ho.runStatus || '-') + '</div>';
+            if (ho.pendingItems) html += '<div style="font-size:11px;color:#faad14;margin-top:2px;">⚠️ 待处理：' + ho.pendingItems.slice(0, 40) + '</div>';
+            html += '</div>';
+          } else {
+            html += '<div style="background:#fffbe6;border:1px dashed #ffe58f;border-radius:8px;padding:12px;">';
+            html += '<div style="font-size:13px;font-weight:600;">' + (shiftIcons[shift] || '') + ' ' + shift + ' <span style="color:#faad14;font-size:11px;">⏳未填写</span></div>';
+            html += '<div style="font-size:11px;color:#8c8c8c;margin-top:4px;">点击"填写交班记录"完成交班</div>';
+            html += '</div>';
+          }
+        });
+        html += '</div></div></div>';
+
+        // 本周排班表
+        html += '<div class="card"><div class="card-header"><h3>📅 本周排班（' + weekData.weekStart + ' ~ ' + weekData.weekEnd + '）</h3></div>';
+        if (schedules.length === 0) {
+          html += '<div class="card-body"><div class="empty">本周暂无排班记录，点击"编辑排班"开始排班</div></div>';
+        } else {
+          // 组织成日期 → 班次 → 班组的表格
+          const dateMap = {};
+          schedules.forEach(s => {
+            if (!dateMap[s.date]) dateMap[s.date] = {};
+            dateMap[s.date][s.shift] = s;
+          });
+          html += '<div class="card-body" style="padding:0;overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">';
+          html += '<thead><tr style="background:#f0f5ff;"><th style="padding:8px;text-align:center;">日期</th><th style="padding:8px;text-align:center;">☀️ 白班</th><th style="padding:8px;text-align:center;">🌙 夜班</th></tr></thead><tbody>';
+          Object.entries(dateMap).sort(([a],[b]) => a.localeCompare(b)).forEach(([date, shiftMap]) => {
+            html += '<tr style="border-bottom:1px solid #f0f0f0;">';
+            html += '<td style="padding:8px;text-align:center;font-weight:600;">' + date.slice(5) + '</td>';
+            ['白班','夜班'].forEach(shift => {
+              const s = shiftMap[shift];
+              if (s) {
+                html += '<td style="padding:8px;text-align:center;"><div style="font-weight:600;color:#1890ff;">' + (s.team || '-') + '</div><div style="color:#595959;">' + (s.members || '').replace(/,/g, ' ') + '</div></td>';
+              } else {
+                html += '<td style="padding:8px;text-align:center;color:#bfbfbf;">-</td>';
+              }
+            });
+            html += '</tr>';
+          });
+          html += '</tbody></table></div>';
+        }
+        html += '</div>';
+
+        page.innerHTML = html;
+      } catch (e) { page.innerHTML = '<div class="empty">加载失败：' + e.message + '</div>'; }
+    }
+
+    function openAddHandover() {
+      const today = new Date().toISOString().slice(0, 10);
+      let html = '<div class="modal-header"><h3>📋 填写交班记录</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+      html += '<form onsubmit="submitHandover(event)"><div class="modal-body">';
+      html += '<div class="form-row"><div class="form-group"><label>日期</label><input type="date" name="date" required value="' + today + '"></div>';
+      html += '<div class="form-group"><label>班次 <span style="color:red">*</span></label><select name="shift" required><option value="">请选择</option><option>白班</option><option>夜班</option></select></div></div>';
+      html += '<div class="form-row"><div class="form-group"><label>班组</label><input type="text" name="team" placeholder="如：班组1"></div>';
+      html += '<div class="form-group"><label>交班人</label><input type="text" name="handoverPerson" placeholder="交班人姓名"></div></div>';
+      html += '<div class="form-group"><label>接班人</label><input type="text" name="receivePerson" placeholder="接班人姓名"></div>';
+      html += '<div class="form-section">交班内容</div>';
+      html += '<div class="form-group"><label>运行状态 <span style="color:red">*</span></label><select name="runStatus" required><option>正常运行</option><option>设备检修</option><option>异常停机</option></select></div>';
+      html += '<div class="form-group"><label>DO情况</label><textarea name="doStatus" rows="2" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;" placeholder="各池DO值情况，如：厌氧<0.2、缺氧<0.5、好氧2.5-4.5mg/L，正常"></textarea></div>';
+      html += '<div class="form-group"><label>水质情况</label><textarea name="waterQuality" rows="2" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;" placeholder="本班出水水质情况"></textarea></div>';
+      html += '<div class="form-group"><label>设备情况</label><textarea name="equipmentStatus" rows="2" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;" placeholder="本班设备运行情况，异常需注明"></textarea></div>';
+      html += '<div class="form-group"><label>药剂情况</label><textarea name="chemicalStatus" rows="2" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;" placeholder="各药剂余量情况"></textarea></div>';
+      html += '<div class="form-group"><label>预警情况</label><textarea name="alerts" rows="2" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;" placeholder="本班发生的预警及处理情况"></textarea></div>';
+      html += '<div class="form-group"><label>待处理事项</label><textarea name="pendingItems" rows="2" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;" placeholder="需下一班次跟进的事项"></textarea></div>';
+      html += '<div class="form-group"><label>备注</label><textarea name="remark" rows="2" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;"></textarea></div>';
+      html += '</div><div class="modal-footer"><button type="button" class="btn btn-outline" onclick="closeModal()">取消</button><button type="submit" class="btn btn-primary">提交交班</button></div></form>';
+      openModal(html);
+    }
+
+    async function submitHandover(e) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const record = {};
+      for (const [k, v] of fd.entries()) if (v !== '') record[k] = v;
+      try {
+        const res = await fetch(API + '/api/shift_handover', { method: 'POST', headers: authHeaders(), body: JSON.stringify(record) });
+        const data = await res.json();
+        if (data.success) { toast('交班记录已提交'); closeModal(); renderShift(); }
+        else toast(data.error || '提交失败', 'error');
+      } catch (e) { toast('网络错误', 'error'); }
+    }
+
+    function openAddSchedule() {
+      const today = new Date().toISOString().slice(0, 10);
+      let html = '<div class="modal-header"><h3>📅 添加排班</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+      html += '<form onsubmit="submitSchedule(event)"><div class="modal-body">';
+      html += '<div class="form-row"><div class="form-group"><label>日期 <span style="color:red">*</span></label><input type="date" name="date" required value="' + today + '"></div>';
+      html += '<div class="form-group"><label>班次 <span style="color:red">*</span></label><select name="shift" required><option value="">请选择</option><option>白班</option><option>夜班</option></select></div></div>';
+      html += '<div class="form-row"><div class="form-group"><label>班组 <span style="color:red">*</span></label><input type="text" name="team" required placeholder="如：班组1"></div>';
+      html += '<div class="form-group"><label>成员</label><input type="text" name="members" placeholder="成员姓名，逗号分隔"></div></div>';
+      html += '<div class="form-group"><label>备注</label><textarea name="remark" rows="2" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;"></textarea></div>';
+      html += '</div><div class="modal-footer"><button type="button" class="btn btn-outline" onclick="closeModal()">取消</button><button type="submit" class="btn btn-primary">确认添加</button></div></form>';
+      openModal(html);
+    }
+
+    async function submitSchedule(e) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const record = {};
+      for (const [k, v] of fd.entries()) if (v !== '') record[k] = v;
+      try {
+        const res = await fetch(API + '/api/shift_schedule', { method: 'POST', headers: authHeaders(), body: JSON.stringify(record) });
+        const data = await res.json();
+        if (data.success) { toast('排班已添加'); closeModal(); renderShift(); }
+        else toast(data.error || '添加失败', 'error');
+      } catch (e) { toast('网络错误', 'error'); }
+    }
+
+    async function openHandoverHistory() {
+      let html = '<div class="modal-header"><h3>📚 交班历史记录</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>';
+      html += '<div class="modal-body"><div class="loading" id="hoHistLoading">加载中...</div><div id="hoHistContent"></div></div>';
+      html += '<div class="modal-footer"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>';
+      openModal(html);
+      try {
+        const to = new Date().toISOString().slice(0, 10);
+        const from = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+        const res = await fetch(API + '/api/shift_handover/list?dateFrom=' + from + '&dateTo=' + to, { headers: authHeaders() });
+        const data = await res.json();
+        const list = data.data || [];
+        let content = '';
+        if (list.length === 0) { content = '<div class="empty">最近14天暂无交班记录</div>'; }
+        else {
+          list.forEach(h => {
+            const sc = h.runStatus === '正常运行' ? '#52c41a' : '#f5222d';
+            content += '<div class="card mb-8"><div class="card-header" style="background:#fafafa;"><h3>' + (h.date || '') + ' ' + (h.shift || '') + ' · ' + (h.team || '') + ' <span style="color:' + sc + ';font-size:12px;">' + (h.runStatus || '') + '</span></h3></div><div class="card-body">';
+            content += '<div style="font-size:13px;"><span style="color:#8c8c8c;">交接：</span>' + (h.handoverPerson || '-') + ' → ' + (h.receivePerson || '-') + '</div>';
+            if (h.doStatus) content += '<div style="font-size:12px;color:#595959;margin-top:4px;"><span style="color:#1890ff;">DO：</span>' + h.doStatus + '</div>';
+            if (h.waterQuality) content += '<div style="font-size:12px;color:#595959;margin-top:2px;"><span style="color:#1890ff;">水质：</span>' + h.waterQuality + '</div>';
+            if (h.equipmentStatus) content += '<div style="font-size:12px;color:#595959;margin-top:2px;"><span style="color:#1890ff;">设备：</span>' + h.equipmentStatus + '</div>';
+            if (h.pendingItems) content += '<div style="font-size:12px;color:#fa8c16;margin-top:2px;"><span style="font-weight:600;">待处理：</span>' + h.pendingItems + '</div>';
+            content += '</div></div>';
+          });
+        }
+        document.getElementById('hoHistLoading').style.display = 'none';
+        document.getElementById('hoHistContent').innerHTML = content;
+      } catch (e) {
+        document.getElementById('hoHistLoading').innerHTML = '<div class="empty">加载失败：' + e.message + '</div>';
+      }
+    }
+
+    // ==================== 报表中心（月报/年报 + 审计日志） ====================
+    function renderReport() {
+      const page = document.getElementById('page-report');
+      const now = new Date();
+      const curYear = now.getFullYear();
+      const curMonth = String(now.getMonth() + 1).padStart(2, '0');
+
+      let html = '<div class="page-header"><h2>📋 报表中心</h2></div>';
+
+      // 月报
+      html += '<div class="card mb-12"><div class="card-header"><h3>📅 月报自动生成</h3></div><div class="card-body">';
+      html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">';
+      html += '<select id="reportYear" style="padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;">';
+      for (let y = curYear; y >= curYear - 3; y--) {
+        html += '<option value="' + y + '"' + (y === curYear ? ' selected' : '') + '>' + y + '年</option>';
+      }
+      html += '</select>';
+      html += '<select id="reportMonth" style="padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;">';
+      for (let m = 1; m <= 12; m++) {
+        const mv = String(m).padStart(2, '0');
+        html += '<option value="' + mv + '"' + (mv === curMonth ? ' selected' : '') + '>' + m + '月</option>';
+      }
+      html += '</select>';
+      html += '<button class="btn btn-primary" onclick="loadMonthlyReport()">📊 查看月报</button>';
+      html += '<button class="btn btn-outline" onclick="downloadMonthlyReport()">📥 下载Excel月报</button>';
+      html += '</div>';
+      html += '<div id="monthlyReportContent"></div>';
+      html += '</div></div>';
+
+      // 年报
+      html += '<div class="card mb-12"><div class="card-header"><h3>📆 年报趋势</h3></div><div class="card-body">';
+      html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">';
+      html += '<select id="yearlyReportYear" style="padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;">';
+      for (let y = curYear; y >= curYear - 3; y--) {
+        html += '<option value="' + y + '"' + (y === curYear ? ' selected' : '') + '>' + y + '年</option>';
+      }
+      html += '</select>';
+      html += '<button class="btn btn-primary" onclick="loadYearlyReport()">📈 查看年报</button>';
+      html += '</div>';
+      html += '<div id="yearlyReportContent"></div>';
+      html += '</div></div>';
+
+      // 运营日志审计（管理员可见）
+      if (currentPermissions && (currentPermissions.canManage || ['厂长','副厂长','运营管理部','技术管理部'].includes(currentUser && currentUser.role))) {
+        html += '<div class="card"><div class="card-header"><h3>📜 运营日志审计</h3></div><div class="card-body">';
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
+        html += '<button class="btn btn-primary" onclick="loadAuditLog()">🔍 查看操作日志</button>';
+        html += '<button class="btn btn-outline" onclick="loadAuditStats()">📊 审计统计</button>';
+        html += '</div>';
+        html += '<div id="auditLogContent"></div>';
+        html += '</div></div>';
+      }
+
+      page.innerHTML = html;
+    }
+
+    async function loadMonthlyReport() {
+      const year = document.getElementById('reportYear').value;
+      const month = document.getElementById('reportMonth').value;
+      const container = document.getElementById('monthlyReportContent');
+      container.innerHTML = '<div class="loading">加载中...</div>';
+      try {
+        const res = await fetch(API + '/api/report/monthly?year=' + year + '&month=' + month, { headers: authHeaders() });
+        const data = await res.json();
+        if (data.error) { container.innerHTML = '<div class="empty">' + data.error + '</div>'; return; }
+
+        const wq = data.waterQuality || {};
+        const op = data.operation || {};
+        const chem = data.chemical || {};
+        const dw = data.dewatering || {};
+        const alrt = data.alerts || {};
+
+        let html = '<div style="background:#f6f8fa;border-radius:8px;padding:12px;margin-bottom:8px;">';
+        html += '<div style="font-size:14px;font-weight:700;color:#1890ff;margin-bottom:8px;">' + year + '年' + parseInt(month) + '月 运行月报</div>';
+
+        // 水量
+        html += '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:8px;">';
+        [['月进水量', (wq.totalInFlow || 0).toFixed(0) + ' m³'], ['月出水量', (op.totalOutFlow || 0).toFixed(0) + ' m³'], ['月用电量', (op.totalElec || 0).toFixed(0) + ' kWh'], ['污泥产量', (dw.totalSludge || 0).toFixed(1) + ' 吨']].forEach(([k, v]) => {
+          html += '<div style="background:#fff;border-radius:6px;padding:8px;text-align:center;"><div style="font-size:11px;color:#8c8c8c;">' + k + '</div><div style="font-size:16px;font-weight:700;color:#1890ff;">' + (v || '-') + '</div></div>';
+        });
+        html += '</div>';
+
+        // 出水水质
+        html += '<div style="font-size:12px;font-weight:600;margin-bottom:6px;">出水水质（月均值）</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px;">';
+        const limits = { 'COD': [wq.avgOutCod, 50], 'NH₃-N': [wq.avgOutNh3, 5], 'TN': [wq.avgOutTn, 15], 'TP': [wq.avgOutTp, 0.5] };
+        Object.entries(limits).forEach(([k, [v, lim]]) => {
+          const exceed = v && v > lim;
+          html += '<div style="background:' + (exceed ? '#fff2f0' : '#f6ffed') + ';border:1px solid ' + (exceed ? '#ffa39e' : '#b7eb8f') + ';border-radius:6px;padding:6px;text-align:center;">';
+          html += '<div style="font-size:10px;color:#8c8c8c;">' + k + '（限≤' + lim + '）</div>';
+          html += '<div style="font-size:14px;font-weight:700;color:' + (exceed ? '#f5222d' : '#52c41a') + ';">' + (v !== null && v !== undefined ? v : '-') + '</div>';
+          html += '<div style="font-size:10px;color:#8c8c8c;">mg/L</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+
+        // 超标情况
+        if (wq.codExceedHours > 0 || wq.nh3ExceedHours > 0 || wq.tnExceedHours > 0) {
+          html += '<div style="background:#fff2f0;border-radius:6px;padding:8px;margin-bottom:8px;font-size:12px;">';
+          html += '<span style="color:#f5222d;font-weight:600;">⚠️ 超标统计：</span>';
+          if (wq.codExceedHours > 0) html += 'COD超标 ' + wq.codExceedHours + ' 小时 ';
+          if (wq.nh3ExceedHours > 0) html += '氨氮超标 ' + wq.nh3ExceedHours + ' 小时 ';
+          if (wq.tnExceedHours > 0) html += '总氮超标 ' + wq.tnExceedHours + ' 小时';
+          html += '</div>';
+        }
+
+        // 药剂投加
+        html += '<div style="font-size:12px;font-weight:600;margin-bottom:6px;">药剂投加（月累计）</div>';
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">';
+        [['碳源', chem.totalCarbonSource], ['PAC', chem.totalPac], ['葡萄糖', chem.totalGlucose], ['次氯酸钠', chem.totalNaclo]].forEach(([k, v]) => {
+          html += '<span style="background:#e6f7ff;border-radius:10px;padding:3px 8px;font-size:12px;color:#1890ff;">' + k + ': ' + (v || 0) + ' kg</span>';
+        });
+        html += '</div>';
+
+        // 预警汇总
+        html += '<div style="font-size:12px;"><span style="color:#8c8c8c;">预警：</span>共 <b>' + (alrt.total || 0) + '</b> 条，高级 <b style="color:#f5222d;">' + (alrt.high || 0) + '</b> 条，处理率 <b style="color:#52c41a;">' + (alrt.total > 0 ? Math.round(alrt.resolved / alrt.total * 100) : 100) + '%</b></div>';
+        html += '</div>';
+
+        container.innerHTML = html;
+      } catch (e) { container.innerHTML = '<div class="empty">加载失败：' + e.message + '</div>'; }
+    }
+
+    function downloadMonthlyReport() {
+      const year = document.getElementById('reportYear').value;
+      const month = document.getElementById('reportMonth').value;
+      const url = API + '/api/report/monthly/export?year=' + year + '&month=' + month + '&token=' + localStorage.getItem('sb_token');
+      window.open(url, '_blank');
+      toast('正在生成月报Excel...');
+    }
+
+    async function loadYearlyReport() {
+      const year = document.getElementById('yearlyReportYear').value;
+      const container = document.getElementById('yearlyReportContent');
+      container.innerHTML = '<div class="loading">加载中...</div>';
+      try {
+        const res = await fetch(API + '/api/report/yearly?year=' + year, { headers: authHeaders() });
+        const data = await res.json();
+        if (data.error) { container.innerHTML = '<div class="empty">' + data.error + '</div>'; return; }
+
+        const ys = data.yearSummary || {};
+        let html = '';
+
+        // 全年汇总卡片
+        html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;">';
+        [['总进水量', (ys.totalInFlow || 0).toFixed(0) + ' m³'], ['总用电量', (ys.totalElec || 0).toFixed(0) + ' kWh'], ['总污泥产量', (ys.totalSludge || 0).toFixed(1) + ' 吨']].forEach(([k, v]) => {
+          html += '<div style="background:#f0f5ff;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:11px;color:#8c8c8c;">' + year + '年' + k + '</div><div style="font-size:15px;font-weight:700;color:#1890ff;">' + (v || '-') + '</div></div>';
+        });
+        html += '</div>';
+
+        // 月度出水水质趋势图
+        html += '<div class="chart-container" style="height:220px;"><canvas id="yearlyWaterChart"></canvas></div>';
+        html += '<div class="chart-container" style="height:180px;margin-top:8px;"><canvas id="yearlyFlowChart"></canvas></div>';
+
+        container.innerHTML = html;
+
+        // 绘制图表
+        setTimeout(() => {
+          const monthly = data.monthlyData || [];
+          const labels = monthly.map(m => m.label);
+
+          const ctx1 = document.getElementById('yearlyWaterChart');
+          if (ctx1) {
+            if (chartInstances.yearlyWater) chartInstances.yearlyWater.destroy();
+            chartInstances.yearlyWater = new Chart(ctx1, {
+              type: 'line',
+              data: {
+                labels,
+                datasets: [
+                  { label: '出水COD(mg/L)', data: monthly.map(m => m.avgOutCod), borderColor: '#ff4d4f', tension: 0.3 },
+                  { label: '出水氨氮(mg/L)', data: monthly.map(m => m.avgOutNh3), borderColor: '#1890ff', tension: 0.3 },
+                  { label: '出水总氮(mg/L)', data: monthly.map(m => m.avgOutTn), borderColor: '#52c41a', tension: 0.3 },
+                ]
+              },
+              options: { responsive: true, maintainAspectRatio: false, plugins: { title: { display: true, text: year + '年出水水质月度趋势', font: { size: 12 } } }, scales: { y: { beginAtZero: true, ticks: { font: { size: 10 } } }, x: { ticks: { font: { size: 10 } } } } }
+            });
+          }
+
+          const ctx2 = document.getElementById('yearlyFlowChart');
+          if (ctx2) {
+            if (chartInstances.yearlyFlow) chartInstances.yearlyFlow.destroy();
+            chartInstances.yearlyFlow = new Chart(ctx2, {
+              type: 'bar',
+              data: {
+                labels,
+                datasets: [
+                  { label: '月进水量(m³)', data: monthly.map(m => m.totalInFlow), backgroundColor: 'rgba(24,144,255,0.5)', borderColor: '#1890ff', borderWidth: 1 },
+                ]
+              },
+              options: { responsive: true, maintainAspectRatio: false, plugins: { title: { display: true, text: year + '年月度进水量', font: { size: 12 } } }, scales: { y: { beginAtZero: true, ticks: { font: { size: 10 } } }, x: { ticks: { font: { size: 10 } } } } }
+            });
+          }
+        }, 200);
+      } catch (e) { container.innerHTML = '<div class="empty">加载失败：' + e.message + '</div>'; }
+    }
+
+    async function loadAuditLog() {
+      const container = document.getElementById('auditLogContent');
+      container.innerHTML = '<div class="loading">加载中...</div>';
+      try {
+        const to = new Date().toISOString().slice(0, 10);
+        const from = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+        const res = await fetch(API + '/api/audit_log/list?dateFrom=' + from + '&dateTo=' + to, { headers: authHeaders() });
+        const data = await res.json();
+        const list = data.data || [];
+        if (list.length === 0) { container.innerHTML = '<div class="empty">近7天暂无操作记录</div>'; return; }
+
+        const actionColors = { '新增': '#52c41a', '修改': '#faad14', '删除': '#f5222d', '导出': '#1890ff', '登录': '#722ed1', '审核': '#13c2c2' };
+        let html = '<div style="font-size:12px;color:#8c8c8c;margin-bottom:8px;">共 ' + data.total + ' 条记录（显示最近200条）</div>';
+        html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<thead><tr style="background:#f0f5ff;"><th style="padding:6px 8px;text-align:left;">时间</th><th style="padding:6px 8px;text-align:left;">操作人</th><th style="padding:6px 8px;text-align:left;">操作</th><th style="padding:6px 8px;text-align:left;">目标</th><th style="padding:6px 8px;text-align:left;">变更</th></tr></thead><tbody>';
+        list.forEach(l => {
+          const actionKey = Object.keys(actionColors).find(k => (l.action || '').includes(k));
+          const ac = actionKey ? actionColors[actionKey] : '#8c8c8c';
+          html += '<tr style="border-bottom:1px solid #f0f0f0;">';
+          html += '<td style="padding:6px 8px;white-space:nowrap;">' + (l.time || '').slice(0, 16).replace('T', ' ') + '</td>';
+          html += '<td style="padding:6px 8px;">' + (l.operator || '-') + '<div style="font-size:10px;color:#8c8c8c;">' + (l.operatorRole || '') + '</div></td>';
+          html += '<td style="padding:6px 8px;"><span style="color:' + ac + ';font-weight:600;">' + (l.action || '-') + '</span></td>';
+          html += '<td style="padding:6px 8px;font-size:11px;">' + (l.targetTable || '') + (l.targetId ? '<div style="color:#bfbfbf;">' + l.targetId.slice(0, 16) + '</div>' : '') + '</td>';
+          html += '<td style="padding:6px 8px;font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + (l.afterData || '') + '">' + (l.afterData ? l.afterData.slice(0, 40) + (l.afterData.length > 40 ? '...' : '') : '-') + '</td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+        container.innerHTML = html;
+      } catch (e) { container.innerHTML = '<div class="empty">加载失败：' + e.message + '</div>'; }
+    }
+
+    async function loadAuditStats() {
+      const container = document.getElementById('auditLogContent');
+      container.innerHTML = '<div class="loading">加载中...</div>';
+      try {
+        const res = await fetch(API + '/api/audit_log/stats', { headers: authHeaders() });
+        const data = await res.json();
+        if (data.error) { container.innerHTML = '<div class="empty">' + data.error + '</div>'; return; }
+
+        let html = '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px;">';
+        html += '<div style="background:#e6f7ff;border-radius:8px;padding:12px;text-align:center;"><div style="font-size:11px;color:#8c8c8c;">今日操作</div><div style="font-size:22px;font-weight:700;color:#1890ff;">' + (data.todayCount || 0) + '</div><div style="font-size:10px;">次</div></div>';
+        html += '<div style="background:#f6ffed;border-radius:8px;padding:12px;text-align:center;"><div style="font-size:11px;color:#8c8c8c;">近7天操作</div><div style="font-size:22px;font-weight:700;color:#52c41a;">' + (data.weekCount || 0) + '</div><div style="font-size:10px;">次</div></div>';
+        html += '</div>';
+
+        if (data.byAction && data.byAction.length > 0) {
+          html += '<div style="margin-bottom:12px;"><div style="font-size:12px;font-weight:600;margin-bottom:6px;">操作类型分布（近7天）</div>';
+          html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+          data.byAction.forEach(a => {
+            html += '<span style="background:#f0f5ff;border-radius:10px;padding:3px 8px;font-size:12px;color:#1890ff;">' + (a.action || '-') + ': ' + a.cnt + ' 次</span>';
+          });
+          html += '</div></div>';
+        }
+
+        if (data.byOperator && data.byOperator.length > 0) {
+          html += '<div><div style="font-size:12px;font-weight:600;margin-bottom:6px;">活跃用户（近7天）</div>';
+          html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">';
+          html += '<thead><tr style="background:#f0f5ff;"><th style="padding:6px 8px;text-align:left;">用户</th><th style="padding:6px 8px;text-align:left;">角色</th><th style="padding:6px 8px;text-align:right;">操作次数</th></tr></thead><tbody>';
+          data.byOperator.forEach(u => {
+            html += '<tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:6px 8px;">' + (u.operator || '-') + '</td><td style="padding:6px 8px;color:#8c8c8c;">' + (u.operatorRole || '-') + '</td><td style="padding:6px 8px;text-align:right;font-weight:600;">' + u.cnt + '</td></tr>';
+          });
+          html += '</tbody></table></div></div>';
+        }
+
+        container.innerHTML = html;
+      } catch (e) { container.innerHTML = '<div class="empty">加载失败：' + e.message + '</div>'; }
+    }
+
   </script>
 </body>
 </html>
