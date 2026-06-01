@@ -2660,6 +2660,120 @@ app.get('/api/report/analysis', authMiddleware, (req, res) => {
     if (sludgeAnalysis.svi.avg && sludgeAnalysis.svi.avg > 150) suggestions.push('SVI均值偏高（' + sludgeAnalysis.svi.avg + '），存在污泥膨胀趋势，建议增加排泥频次');
     if (alertAnalysis.total > 20) suggestions.push('本月预警数较多（' + alertAnalysis.total + '条），建议系统排查预警来源并优化工艺参数');
 
+    // ========== 图表数据 ==========
+    // 生成月内每日标签
+    const chartLabels = [];
+    for (let d = 1; d <= lastDay; d++) chartLabels.push(month + '-' + String(d).padStart(2, '0'));
+    const dayLabel = chartLabels.map(l => l.slice(5)); // "06-01" -> "01"
+    const avg = (arr, key) => { const vs = arr.map(r => Number(r[key])).filter(v => !isNaN(v) && v > 0); return vs.length ? r2(vs.reduce((a,b)=>a+b,0)/vs.length) : null; };
+
+    // 水质图表 - 每日进出水均值
+    const waterByDay = {};
+    waterData.forEach(r => { if (!waterByDay[r.date]) waterByDay[r.date] = []; waterByDay[r.date].push(r); });
+    const waterChart = {
+      labels: dayLabel,
+      datasets: [
+        { label: '进水COD', data: chartLabels.map((_,i) => { const d=year+'-'+chartLabels[i]; const recs=waterByDay[d]||[]; return recs.length?avg(recs,'inCod'):null; }), borderColor: '#5b8ff9', tension: 0.3, borderWidth: 2 },
+        { label: '出水COD', data: chartLabels.map((_,i) => { const d=year+'-'+chartLabels[i]; const recs=waterByDay[d]||[]; return recs.length?avg(recs,'outCod'):null; }), borderColor: '#e86452', tension: 0.3, borderWidth: 2 },
+        { label: '进水氨氮', data: chartLabels.map((_,i) => { const d=year+'-'+chartLabels[i]; const recs=waterByDay[d]||[]; return recs.length?avg(recs,'inNh3'):null; }), borderColor: '#5ad8a6', tension: 0.3, borderWidth: 2 },
+        { label: '出水氨氮', data: chartLabels.map((_,i) => { const d=year+'-'+chartLabels[i]; const recs=waterByDay[d]||[]; return recs.length?avg(recs,'outNh3'):null; }), borderColor: '#f6bd16', tension: 0.3, borderWidth: 2 },
+        { label: '出水总氮', data: chartLabels.map((_,i) => { const d=year+'-'+chartLabels[i]; const recs=waterByDay[d]||[]; return recs.length?avg(recs,'outTn'):null; }), borderColor: '#9270ca', tension: 0.3, borderWidth: 1.5, hidden: true },
+        { label: '出水总磷', data: chartLabels.map((_,i) => { const d=year+'-'+chartLabels[i]; const recs=waterByDay[d]||[]; return recs.length?avg(recs,'outTp'):null; }), borderColor: '#ff9845', tension: 0.3, borderWidth: 1.5, hidden: true },
+      ],
+      thresholds: [
+        { label: 'COD限值(50)', value: 50, color: '#e86452' },
+        { label: '氨氮限值(5)', value: 5, color: '#f6bd16' },
+      ]
+    };
+
+    // DO图表 - 每日各池均值
+    const doByDay = {};
+    doData.forEach(r => { if (!doByDay[r.date]) doByDay[r.date] = []; doByDay[r.date].push(r); });
+    const doChart = {
+      labels: dayLabel,
+      datasets: [
+        { label: '厌氧池', data: chartLabels.map((_,i) => { const d=year+'-'+chartLabels[i]; const recs=doByDay[d]||[]; return recs.length?avg(recs,'anaerobic'):null; }), borderColor: '#e86452', tension: 0.3, borderWidth: 2 },
+        { label: '缺氧池', data: chartLabels.map((_,i) => { const d=year+'-'+chartLabels[i]; const recs=doByDay[d]||[]; return recs.length?avg(recs,'anoxic'):null; }), borderColor: '#5b8ff9', tension: 0.3, borderWidth: 2 },
+        { label: '好氧池1', data: chartLabels.map((_,i) => { const d=year+'-'+chartLabels[i]; const recs=doByDay[d]||[]; return recs.length?avg(recs,'aerobic1'):null; }), borderColor: '#5ad8a6', tension: 0.3, borderWidth: 2 },
+        { label: '好氧池2', data: chartLabels.map((_,i) => { const d=year+'-'+chartLabels[i]; const recs=doByDay[d]||[]; return recs.length?avg(recs,'aerobic2'):null; }), borderColor: '#f6bd16', tension: 0.3, borderWidth: 2 },
+        { label: '好氧池3', data: chartLabels.map((_,i) => { const d=year+'-'+chartLabels[i]; const recs=doByDay[d]||[]; return recs.length?avg(recs,'aerobic3'):null; }), borderColor: '#9270ca', tension: 0.3, borderWidth: 1.5, hidden: true },
+        { label: '好氧池4', data: chartLabels.map((_,i) => { const d=year+'-'+chartLabels[i]; const recs=doByDay[d]||[]; return recs.length?avg(recs,'aerobic4'):null; }), borderColor: '#ff9845', tension: 0.3, borderWidth: 1.5, hidden: true },
+      ],
+      thresholds: [
+        { label: '厌氧上限(0.2)', value: 0.2, color: '#e86452' },
+        { label: '缺氧上限(0.5)', value: 0.5, color: '#5b8ff9' },
+        { label: '好氧下限(2.5)', value: 2.5, color: '#5ad8a6' },
+        { label: '好氧上限(4.5)', value: 4.5, color: '#f6bd16' },
+      ]
+    };
+
+    // 污泥图表 - 每日SV30/SVI/MLSS
+    const labByDay = {};
+    labData.forEach(r => { labByDay[r.date] = r; });
+    const sludgeChart = {
+      labels: dayLabel,
+      datasets: [
+        { label: 'SV30(%)', data: chartLabels.map((_,i) => { const r=labByDay[year+'-'+chartLabels[i]]; return r&&Number(r.sv30)>0?r2(Number(r.sv30)):null; }), borderColor: '#5b8ff9', tension: 0.3, borderWidth: 2, yAxisID: 'y' },
+        { label: 'SVI(mL/g)', data: chartLabels.map((_,i) => { const r=labByDay[year+'-'+chartLabels[i]]; return r&&Number(r.svi)>0?r2(Number(r.svi)):null; }), borderColor: '#e86452', tension: 0.3, borderWidth: 2, yAxisID: 'y' },
+        { label: 'MLSS(mg/L)', data: chartLabels.map((_,i) => { const r=labByDay[year+'-'+chartLabels[i]]; return r&&Number(r.mlss)>0?r2(Number(r.mlss)):null; }), borderColor: '#9270ca', tension: 0.3, borderWidth: 2, yAxisID: 'y1' },
+      ],
+      thresholds: [
+        { label: 'SV30上限(30)', value: 30, color: '#5b8ff9', axis: 'y' },
+        { label: 'SVI上限(150)', value: 150, color: '#e86452', axis: 'y' },
+      ]
+    };
+
+    // 药剂图表 - 每日投加量
+    const chemByDay = {};
+    dosingData.forEach(r => { if (!chemByDay[r.date]) chemByDay[r.date] = []; chemByDay[r.date].push(r); });
+    const chemChart = {
+      labels: dayLabel,
+      datasets: [
+        { label: '碳源(kg)', data: chartLabels.map((_,i) => { const recs=chemByDay[year+'-'+chartLabels[i]]||[]; return recs.length?avg(recs,'carbonSource'):null; }), borderColor: '#e86452', backgroundColor: 'rgba(232,100,82,0.1)', tension: 0.3, borderWidth: 2, fill: true },
+        { label: 'PAC(kg)', data: chartLabels.map((_,i) => { const recs=chemByDay[year+'-'+chartLabels[i]]||[]; return recs.length?avg(recs,'pac'):null; }), borderColor: '#5b8ff9', backgroundColor: 'rgba(91,143,249,0.1)', tension: 0.3, borderWidth: 2, fill: true },
+        { label: '次氯酸钠(kg)', data: chartLabels.map((_,i) => { const recs=chemByDay[year+'-'+chartLabels[i]]||[]; return recs.length?avg(recs,'naclo'):null; }), borderColor: '#9270ca', tension: 0.3, borderWidth: 1.5 },
+        { label: '阳离子PAM(kg)', data: chartLabels.map((_,i) => { const recs=chemByDay[year+'-'+chartLabels[i]]||[]; return recs.length?avg(recs,'cationPam'):null; }), borderColor: '#f6bd16', tension: 0.3, borderWidth: 1.5 },
+      ],
+    };
+
+    // 运营效率图表 - 每日水量/电耗
+    const summaryByDay = {};
+    dailySummary.forEach(r => { summaryByDay[r.date] = r; });
+    const opsChart = {
+      labels: dayLabel,
+      datasets: [
+        { label: '日进水量(m³)', data: chartLabels.map((_,i) => { const r=summaryByDay[year+'-'+chartLabels[i]]; return r&&Number(r.inFlowTotal)>0?r2(Number(r.inFlowTotal)):null; }), borderColor: '#1890ff', backgroundColor: 'rgba(24,144,255,0.1)', tension: 0.3, borderWidth: 2, fill: true, yAxisID: 'y' },
+        { label: '日用电量(kWh)', data: chartLabels.map((_,i) => { const r=summaryByDay[year+'-'+chartLabels[i]]; return r&&Number(r.electricity)>0?r2(Number(r.electricity)):null; }), borderColor: '#fa8c16', tension: 0.3, borderWidth: 2, yAxisID: 'y1' },
+        { label: '污泥产量(吨)', data: chartLabels.map((_,i) => { const r=summaryByDay[year+'-'+chartLabels[i]]; return r&&Number(r.sludgeOutput)>0?r2(Number(r.sludgeOutput)):null; }), borderColor: '#722ed1', tension: 0.3, borderWidth: 1.5, yAxisID: 'y1' },
+      ],
+    };
+
+    // 工艺波动分析
+    const fluctuation = {};
+    const cv = (s) => s && s.avg > 0 ? r2(s.std / s.avg * 100) : null; // 变异系数
+    fluctuation.waterCodCv = cv(waterAnalysis.outCod);
+    fluctuation.waterNh3Cv = cv(waterAnalysis.outNh3);
+    fluctuation.waterTnCv = cv(waterAnalysis.outTn);
+    fluctuation.waterTpCv = cv(waterAnalysis.outTp);
+    fluctuation.doAerobicCv = cv(doAnalysis.aerobic);
+    fluctuation.sv30Cv = cv(sludgeAnalysis.sv30);
+    fluctuation.sviCv = cv(sludgeAnalysis.svi);
+    fluctuation.mlssCv = cv(sludgeAnalysis.mlss);
+    fluctuation.flowCv = cv(waterAnalysis.inFlow);
+    // 综合评价
+    const cvs = [fluctuation.waterCodCv, fluctuation.waterNh3Cv, fluctuation.doAerobicCv, fluctuation.sv30Cv, fluctuation.flowCv].filter(v => v !== null);
+    fluctuation.overallCv = cvs.length ? r2(cvs.reduce((a,b)=>a+b,0)/cvs.length) : null;
+    fluctuation.level = fluctuation.overallCv === null ? '数据不足' : fluctuation.overallCv < 20 ? '稳定' : fluctuation.overallCv < 40 ? '波动' : '剧烈波动';
+    // 工艺稳定性评估
+    const processEvaluation = [];
+    if (fluctuation.waterCodCv !== null && fluctuation.waterCodCv > 30) processEvaluation.push('出水COD波动较大（CV=' + fluctuation.waterCodCv + '%），进水水质变化可能较剧烈，需关注调节池缓冲效果');
+    if (fluctuation.waterNh3Cv !== null && fluctuation.waterNh3Cv > 30) processEvaluation.push('出水氨氮波动明显（CV=' + fluctuation.waterNh3Cv + '%），硝化系统可能不够稳定，建议关注好氧池DO和泥龄');
+    if (fluctuation.doAerobicCv !== null && fluctuation.doAerobicCv > 25) processEvaluation.push('好氧池DO波动较大（CV=' + fluctuation.doAerobicCv + '%），曝气调控需优化，建议检查鼓风机运行和DO设定值');
+    if (fluctuation.sv30Cv !== null && fluctuation.sv30Cv > 25) processEvaluation.push('SV30波动较大（CV=' + fluctuation.sv30Cv + '%），污泥沉降性能不稳定，需关注污泥膨胀风险');
+    if (fluctuation.mlssCv !== null && fluctuation.mlssCv > 25) processEvaluation.push('MLSS波动较大（CV=' + fluctuation.mlssCv + '%），排泥策略可能需要调整');
+    if (fluctuation.flowCv !== null && fluctuation.flowCv > 30) processEvaluation.push('进水量波动较大（CV=' + fluctuation.flowCv + '%），需关注雨季影响和调节池液位');
+    if (processEvaluation.length === 0) processEvaluation.push('各项工艺参数波动在合理范围内，整体运行稳定');
+
     res.json({
       period: { year, month, dateFrom, dateTo, daysInMonth: lastDay },
       generatedAt: new Date().toISOString(),
@@ -2672,6 +2786,9 @@ app.get('/api/report/analysis', authMiddleware, (req, res) => {
       alertAnalysis,
       issues,
       suggestions,
+      charts: { water: waterChart, do: doChart, sludge: sludgeChart, chemical: chemChart, operation: opsChart },
+      fluctuation,
+      processEvaluation,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
