@@ -416,10 +416,6 @@ function initDB() {
         rand(8000, 12000, 0),  // 日进水量 m³
         rand(7500, 11500, 0),  // 日出水量 m³
         rand(8, 20, 1),        // 日污泥产量 吨
-        rand(85, 95, 1),       // COD去除率 %
-        rand(88, 98, 1),       // 氨氮去除率 %
-        rand(60, 80, 1),       // 总氮去除率 %
-        rand(85, 96, 1),       // 总磷去除率 %
         '正常运行', '', 'group1', now
       ]);
     }
@@ -1154,14 +1150,6 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
     outTp: { trend: trend(dailyWater.map(d => d.outTp).filter(v => v !== null)), avg: avg(dailyWater.map(d => d.outTp).filter(v => v !== null)) },
   };
 
-  // 去除效率
-  const removalEff = {
-    cod: waterTrends.inCod.avg && waterTrends.outCod.avg ? Math.round((1 - waterTrends.outCod.avg / waterTrends.inCod.avg) * 100) : null,
-    nh3: waterTrends.inNh3.avg && waterTrends.outNh3.avg ? Math.round((1 - waterTrends.outNh3.avg / waterTrends.inNh3.avg) * 100) : null,
-    tn: waterTrends.inTn.avg && waterTrends.outTn.avg ? Math.round((1 - waterTrends.outTn.avg / waterTrends.inTn.avg) * 100) : null,
-    tp: waterTrends.inTp.avg && waterTrends.outTp.avg ? Math.round((1 - waterTrends.outTp.avg / waterTrends.inTp.avg) * 100) : null,
-  };
-
   // ===== Step 4: 污泥指标分析 =====
   const sv30Vals = recentLab14.filter(r => r.sv30).map(r => Number(r.sv30));
   const sviVals = recentLab14.filter(r => r.svi).map(r => Number(r.svi));
@@ -1311,7 +1299,6 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
     input: { inFlow, inCod, inNh3, inTn, inTp },
     waterQuality: {
       trends: waterTrends,
-      removalEfficiency: removalEff,
       warnings: waterQualityWarnings,
     },
     sludgeStatus,
@@ -2516,6 +2503,338 @@ app.get('/api/report/monthly/export', authMiddleware, async (req, res) => {
 });
 
 // ==================== 健康检查 + 微信域名校验 ====================
+// ==================== 月度数据分析报告 ====================
+app.get('/api/report/analysis', authMiddleware, (req, res) => {
+  try {
+    const year = req.query.year || new Date().getFullYear().toString();
+    const month = req.query.month || String(new Date().getMonth() + 1).padStart(2, '0');
+    const dateFrom = year + '-' + month + '-01';
+    const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+    const dateTo = year + '-' + month + '-' + String(lastDay).padStart(2, '0');
+    const r2 = v => v !== null && v !== undefined && !isNaN(v) ? Math.round(v * 100) / 100 : null;
+    const r4 = v => v !== null && v !== undefined && !isNaN(v) ? Math.round(v * 10000) / 10000 : null;
+
+    // ========== 1. 水质分析 ==========
+    // 小时进出水数据
+    const waterData = db.prepare('SELECT * FROM hourly_water WHERE date>=? AND date<=? ORDER BY date ASC, hour ASC').all(dateFrom, dateTo);
+    const inCods = waterData.map(r => Number(r.inCod)).filter(v => v > 0);
+    const outCods = waterData.map(r => Number(r.outCod)).filter(v => v > 0);
+    const inNh3s = waterData.map(r => Number(r.inNh3)).filter(v => v > 0);
+    const outNh3s = waterData.map(r => Number(r.outNh3)).filter(v => v > 0);
+    const inTns = waterData.map(r => Number(r.inTn)).filter(v => v > 0);
+    const outTns = waterData.map(r => Number(r.outTn)).filter(v => v > 0);
+    const inTps = waterData.map(r => Number(r.inTp)).filter(v => v > 0);
+    const outTps = waterData.map(r => Number(r.outTp)).filter(v => v > 0);
+    const inFlows = waterData.map(r => Number(r.inFlow)).filter(v => v > 0);
+    const outFlows = waterData.map(r => Number(r.outFlow)).filter(v => v > 0);
+    const inPhs = waterData.map(r => Number(r.inPh)).filter(v => v > 0);
+
+    const stats = arr => {
+      if (!arr.length) return { avg: null, min: null, max: null, count: 0, std: null };
+      const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
+      const variance = arr.reduce((sum, v) => sum + (v - avg) ** 2, 0) / arr.length;
+      return { avg: r2(avg), min: r2(Math.min(...arr)), max: r2(Math.max(...arr)), count: arr.length, std: r2(Math.sqrt(variance)) };
+    };
+    const exceedRate = (arr, limit) => arr.length ? r2(arr.filter(v => v > limit).length / arr.length * 100) : null;
+
+    const waterAnalysis = {
+      totalRecords: waterData.length,
+      inCod: stats(inCods), outCod: stats(outCods), codExceedRate: exceedRate(outCods, 50),
+      inNh3: stats(inNh3s), outNh3: stats(outNh3s), nh3ExceedRate: exceedRate(outNh3s, 5),
+      inTn: stats(inTns), outTn: stats(outTns), tnExceedRate: exceedRate(outTns, 15),
+      inTp: stats(inTps), outTp: stats(outTps), tpExceedRate: exceedRate(outTps, 0.5),
+      inFlow: stats(inFlows), outFlow: stats(outFlows), inPh: stats(inPhs),
+      totalInFlow: r2(inFlows.reduce((a, b) => a + b, 0)),
+      totalOutFlow: r2(outFlows.reduce((a, b) => a + b, 0)),
+    };
+
+    // ========== 2. DO溶解氧分析 ==========
+    const doData = db.prepare('SELECT * FROM do_inspection WHERE date>=? AND date<=? ORDER BY date ASC').all(dateFrom, dateTo);
+    const doAnaerobics = doData.map(r => Number(r.anaerobic)).filter(v => !isNaN(v) && v > 0);
+    const doAnoxics = doData.map(r => Number(r.anoxic)).filter(v => !isNaN(v) && v > 0);
+    const doAerobics = doData.flatMap(r => [Number(r.aerobic1), Number(r.aerobic2), Number(r.aerobic3), Number(r.aerobic4)]).filter(v => !isNaN(v) && v > 0);
+    const doAnalysis = {
+      totalRecords: doData.length,
+      anaerobic: { ...stats(doAnaerobics), exceedRate: doAnaerobics.length ? r2(doAnaerobics.filter(v => v > 0.2).length / doAnaerobics.length * 100) : null, limit: '<0.2' },
+      anoxic: { ...stats(doAnoxics), exceedRate: doAnoxics.length ? r2(doAnoxics.filter(v => v > 0.5).length / doAnoxics.length * 100) : null, limit: '<0.5' },
+      aerobic: { ...stats(doAerobics), exceedRate: doAerobics.length ? r2(doAerobics.filter(v => v < 2.5 || v > 4.5).length / doAerobics.length * 100) : null, limit: '2.5-4.5' },
+    };
+
+    // ========== 3. 污泥分析 ==========
+    const labData = db.prepare('SELECT * FROM daily_lab WHERE date>=? AND date<=? ORDER BY date ASC').all(dateFrom, dateTo);
+    const sv30s = labData.map(r => Number(r.sv30)).filter(v => v > 0);
+    const svis = labData.map(r => Number(r.svi)).filter(v => v > 0);
+    const mlsss = labData.map(r => Number(r.mlss)).filter(v => v > 0);
+    const sludgeAnalysis = {
+      totalRecords: labData.length,
+      sv30: { ...stats(sv30s), normalRange: '15-30%', exceedRate: sv30s.length ? r2(sv30s.filter(v => v > 30).length / sv30s.length * 100) : null },
+      svi: { ...stats(svis), normalRange: '80-150', exceedRate: svis.length ? r2(svis.filter(v => v > 150 || v < 80).length / svis.length * 100) : null },
+      mlss: { ...stats(mlsss), normalRange: '2000-4000', exceedRate: mlsss.length ? r2(mlsss.filter(v => v > 4000 || v < 2000).length / mlsss.length * 100) : null },
+    };
+
+    // ========== 4. 药剂分析 ==========
+    const dosingData = db.prepare('SELECT * FROM chemical_dosing WHERE date>=? AND date<=? ORDER BY date ASC').all(dateFrom, dateTo);
+    const carbonSources = dosingData.map(r => Number(r.carbonSource)).filter(v => v > 0);
+    const pacs = dosingData.map(r => Number(r.pac)).filter(v => v > 0);
+    const glucoses = dosingData.map(r => Number(r.glucose)).filter(v => v > 0);
+    const naclos = dosingData.map(r => Number(r.naclo)).filter(v => v > 0);
+    const anionPams = dosingData.map(r => Number(r.anionPam)).filter(v => v > 0);
+    const cationPams = dosingData.map(r => Number(r.cationPam)).filter(v => v > 0);
+    const chemicalAnalysis = {
+      totalRecords: dosingData.length,
+      carbonSource: { ...stats(carbonSources), total: r2(carbonSources.reduce((a, b) => a + b, 0)), unit: 'kg' },
+      pac: { ...stats(pacs), total: r2(pacs.reduce((a, b) => a + b, 0)), unit: 'kg' },
+      glucose: { ...stats(glucoses), total: r2(glucoses.reduce((a, b) => a + b, 0)), unit: 'kg' },
+      naclo: { ...stats(naclos), total: r2(naclos.reduce((a, b) => a + b, 0)), unit: 'kg' },
+      anionPam: { ...stats(anionPams), total: r2(anionPams.reduce((a, b) => a + b, 0)), unit: 'kg' },
+      cationPam: { ...stats(cationPams), total: r2(cationPams.reduce((a, b) => a + b, 0)), unit: 'kg' },
+      // 吨水药耗
+      tonsWaterChemical: waterAnalysis.totalInFlow > 0 ? {
+        carbonSource: r4(carbonSources.reduce((a, b) => a + b, 0) / waterAnalysis.totalInFlow * 1000),
+        pac: r4(pacs.reduce((a, b) => a + b, 0) / waterAnalysis.totalInFlow * 1000),
+      } : null,
+    };
+
+    // ========== 5. 运营效率 ==========
+    const dailySummary = db.prepare('SELECT * FROM daily_summary WHERE date>=? AND date<=? ORDER BY date ASC').all(dateFrom, dateTo);
+    const elecs = dailySummary.map(r => Number(r.electricity)).filter(v => v > 0);
+    const inFlowTotals = dailySummary.map(r => Number(r.inFlowTotal)).filter(v => v > 0);
+    const sludgeOutputs = dailySummary.map(r => Number(r.sludgeOutput)).filter(v => v > 0);
+    const normalDays = dailySummary.filter(r => r.runStatus === '正常运行').length;
+    const operationAnalysis = {
+      totalRecords: dailySummary.length,
+      electricity: { ...stats(elecs), total: r2(elecs.reduce((a, b) => a + b, 0)), unit: 'kWh' },
+      inFlowTotal: { ...stats(inFlowTotals), total: r2(inFlowTotals.reduce((a, b) => a + b, 0)), unit: 'm³' },
+      sludgeOutput: { ...stats(sludgeOutputs), total: r2(sludgeOutputs.reduce((a, b) => a + b, 0)), unit: '吨' },
+      normalDays, totalDays: lastDay, operationRate: r2(normalDays / lastDay * 100),
+      // 吨水电耗
+      tonsWaterElec: inFlowTotals.reduce((a, b) => a + b, 0) > 0 ? r4(elecs.reduce((a, b) => a + b, 0) / inFlowTotals.reduce((a, b) => a + b, 0)) : null,
+    };
+
+    // ========== 6. 脱泥分析 ==========
+    const dewData = db.prepare('SELECT * FROM dewatering WHERE date>=? AND date<=? ORDER BY date ASC').all(dateFrom, dateTo);
+    const dewDurations = dewData.map(r => Number(r.duration)).filter(v => v > 0);
+    const dewSludges = dewData.map(r => Number(r.sludgeOutput)).filter(v => v > 0);
+    const dewateringAnalysis = {
+      totalRecords: dewData.length, activeDays: dewData.length > 0 ? new Set(dewData.map(r => r.date)).size : 0,
+      duration: { ...stats(dewDurations), total: r2(dewDurations.reduce((a, b) => a + b, 0)), unit: 'h' },
+      sludgeOutput: { ...stats(dewSludges), total: r2(dewSludges.reduce((a, b) => a + b, 0)), unit: '吨' },
+    };
+
+    // ========== 7. 预警分析 ==========
+    const alertData = db.prepare('SELECT * FROM alerts WHERE time>=? AND time<=? ORDER BY time ASC').all(dateFrom + 'T00:00:00', dateTo + 'T23:59:59');
+    const highAlerts = alertData.filter(r => r.level === 'high').length;
+    const mediumAlerts = alertData.filter(r => r.level === 'medium').length;
+    const lowAlerts = alertData.filter(r => r.level === 'low').length;
+    const resolvedAlerts = alertData.filter(r => r.status === 'resolved').length;
+    // 预警类型分布
+    const alertTypes = {};
+    alertData.forEach(a => { alertTypes[a.type || a.source || '其他'] = (alertTypes[a.type || a.source || '其他'] || 0) + 1; });
+    const alertAnalysis = {
+      total: alertData.length, high: highAlerts, medium: mediumAlerts, low: lowAlerts,
+      resolved: resolvedAlerts, resolveRate: alertData.length ? r2(resolvedAlerts / alertData.length * 100) : null,
+      types: alertTypes,
+    };
+
+    // ========== 8. 综合评估与建议 ==========
+    const issues = [];
+    if (waterAnalysis.codExceedRate > 5) issues.push('出水COD超标率较高（' + waterAnalysis.codExceedRate + '%），需加强曝气调控和污泥浓度管理');
+    if (waterAnalysis.nh3ExceedRate > 5) issues.push('出水氨氮超标率较高（' + waterAnalysis.nh3ExceedRate + '%），建议检查好氧池溶解氧水平及泥龄');
+    if (waterAnalysis.tnExceedRate > 5) issues.push('出水总氮超标率较高（' + waterAnalysis.tnExceedRate + '%），建议增加碳源投加量，加强反硝化效果');
+    if (waterAnalysis.tpExceedRate > 5) issues.push('出水总磷超标率较高（' + waterAnalysis.tpExceedRate + '%），需优化化学除磷药剂投加量');
+    if (doAnalysis.aerobic.exceedRate > 20) issues.push('好氧池DO达标率偏低（超标率' + doAnalysis.aerobic.exceedRate + '%），建议检查曝气系统运行状况');
+    if (sludgeAnalysis.sv30.exceedRate > 20) issues.push('SV30超标率较高（' + sludgeAnalysis.sv30.exceedRate + '%），存在污泥膨胀风险，需关注');
+    if (sludgeAnalysis.mlss.exceedRate > 30) issues.push('MLSS异常率较高（' + sludgeAnalysis.mlss.exceedRate + '%），建议调整排泥策略');
+    if (operationAnalysis.operationRate < 90) issues.push('设备运行率偏低（' + operationAnalysis.operationRate + '%），需加强设备维护');
+
+    const suggestions = [];
+    // 智能加药建议
+    if (chemicalAnalysis.tonsWaterChemical) {
+      if (chemicalAnalysis.tonsWaterChemical.carbonSource > 10) suggestions.push('吨水碳源投加量偏高（' + chemicalAnalysis.tonsWaterChemical.carbonSource + ' kg/千m³），建议优化碳源投加策略');
+      else suggestions.push('碳源投加量在合理范围内，继续维持当前投加策略');
+    }
+    if (operationAnalysis.tonsWaterElec) {
+      if (operationAnalysis.tonsWaterElec > 0.4) suggestions.push('吨水电耗偏高（' + operationAnalysis.tonsWaterElec + ' kWh/m³），建议排查曝气系统效率及泵组运行');
+      else suggestions.push('吨水电耗在合理范围，继续保持节能运行');
+    }
+    if (sludgeAnalysis.svi.avg && sludgeAnalysis.svi.avg > 150) suggestions.push('SVI均值偏高（' + sludgeAnalysis.svi.avg + '），存在污泥膨胀趋势，建议增加排泥频次');
+    if (alertAnalysis.total > 20) suggestions.push('本月预警数较多（' + alertAnalysis.total + '条），建议系统排查预警来源并优化工艺参数');
+
+    res.json({
+      period: { year, month, dateFrom, dateTo, daysInMonth: lastDay },
+      generatedAt: new Date().toISOString(),
+      waterAnalysis,
+      doAnalysis,
+      sludgeAnalysis,
+      chemicalAnalysis,
+      operationAnalysis,
+      dewateringAnalysis,
+      alertAnalysis,
+      issues,
+      suggestions,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 月度分析报告 Word 文档导出
+app.get('/api/report/analysis/export', authMiddleware, async (req, res) => {
+  try {
+    const year = req.query.year || new Date().getFullYear().toString();
+    const month = req.query.month || String(new Date().getMonth() + 1).padStart(2, '0');
+
+    // 调用同一个分析接口获取数据
+    const analysisUrl = 'http://localhost:' + PORT + '/api/report/analysis?year=' + year + '&month=' + month;
+    const token = req.headers.authorization?.replace('Bearer ', '') || '';
+    const analysisRes = await fetch(analysisUrl, { headers: { Authorization: 'Bearer ' + token } });
+    const data = await analysisRes.json();
+
+    // 生成 HTML 格式报告（可在浏览器中打印为 PDF）
+    const r2 = v => v !== null && v !== undefined && !isNaN(v) ? v : '-';
+    const fmtArr = (s) => s ? `均值${r2(s.avg)} | 范围${r2(s.min)}~${r2(s.max)}` : '暂无数据';
+
+    let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>月度数据分析报告</title>
+<style>
+body{font-family:'Microsoft YaHei',sans-serif;padding:40px 60px;color:#333;line-height:1.8;font-size:14px;}
+h1{text-align:center;color:#1a1a2e;border-bottom:3px solid #1a1a2e;padding-bottom:12px;margin-bottom:8px;}
+.subtitle{text-align:center;color:#666;font-size:13px;margin-bottom:30px;}
+h2{color:#16213e;border-left:4px solid #0f3460;padding-left:12px;margin-top:30px;}
+h3{color:#1a1a2e;margin-top:20px;}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;}
+th{background:#1a1a2e;color:#fff;padding:8px 12px;text-align:left;font-weight:500;}
+td{padding:7px 12px;border-bottom:1px solid #e8e8e8;}
+tr:nth-child(even) td{background:#f8f9fa;}
+.danger{color:#f5222d;font-weight:600;}
+.warning{color:#fa8c16;font-weight:600;}
+.success{color:#52c41a;font-weight:600;}
+.issue{background:#fff2f0;border-left:4px solid #f5222d;padding:10px 14px;margin:8px 0;border-radius:4px;}
+.suggestion{background:#f6ffed;border-left:4px solid #52c41a;padding:10px 14px;margin:8px 0;border-radius:4px;}
+.summary-box{background:#f0f5ff;border:1px solid #d6e4ff;border-radius:8px;padding:16px;margin:12px 0;}
+.footer{text-align:center;color:#999;font-size:12px;margin-top:40px;border-top:1px solid #eee;padding-top:12px;}
+@media print{body{padding:20px 30px;}h2{page-break-before:auto;}}
+</style></head><body>`;
+
+    html += `<h1>污水处理厂月度数据分析报告</h1>`;
+    html += `<div class="subtitle">报告期间：${year}年${month}月 | 生成时间：${new Date().toLocaleString('zh-CN')}</div>`;
+
+    // 概览
+    html += `<div class="summary-box">
+      <h3 style="margin-top:0;">📊 月度概览</h3>
+      <p>📊 水质记录 <strong>${data.waterAnalysis.totalRecords}</strong> 条 | 🔍 DO巡检 <strong>${data.doAnalysis.totalRecords}</strong> 条 | 🧫 化验记录 <strong>${data.sludgeAnalysis.totalRecords}</strong> 条</p>
+      <p>💧 月进水总量 <strong>${r2(data.waterAnalysis.totalInFlow)}</strong> m³ | 💡 月用电 <strong>${r2(data.operationAnalysis.electricity?.total)}</strong> kWh | ⚡ 吨水电耗 <strong>${r2(data.operationAnalysis.tonsWaterElec)}</strong> kWh/m³</p>
+      <p>🔧 设备运行率 <strong>${r2(data.operationAnalysis.operationRate)}%</strong> | 🚨 预警 <strong>${data.alertAnalysis.total}</strong> 条（已处理${data.alertAnalysis.resolved}条）</p>
+    </div>`;
+
+    // 1. 水质分析
+    const wa = data.waterAnalysis;
+    html += `<h2>一、进出水水质分析</h2>`;
+    html += `<table><tr><th>指标</th><th>进水均值</th><th>进水范围</th><th>出水均值</th><th>出水范围</th><th>排放标准</th><th>超标率</th></tr>`;
+    const waterRows = [
+      ['COD (mg/L)', wa.inCod, wa.outCod, 50, wa.codExceedRate],
+      ['氨氮 (mg/L)', wa.inNh3, wa.outNh3, 5, wa.nh3ExceedRate],
+      ['总氮 (mg/L)', wa.inTn, wa.outTn, 15, wa.tnExceedRate],
+      ['总磷 (mg/L)', wa.inTp, wa.outTp, 0.5, wa.tpExceedRate],
+    ];
+    waterRows.forEach(([label, inS, outS, limit, er]) => {
+      const cls = er > 5 ? 'danger' : er > 0 ? 'warning' : 'success';
+      html += `<tr><td>${label}</td><td>${r2(inS?.avg)}</td><td>${r2(inS?.min)}~${r2(inS?.max)}</td><td>${r2(outS?.avg)}</td><td>${r2(outS?.min)}~${r2(outS?.max)}</td><td>≤${limit}</td><td class="${cls}">${r2(er)}%</td></tr>`;
+    });
+    html += `</table>`;
+
+    // 2. DO分析
+    const da = data.doAnalysis;
+    html += `<h2>二、溶解氧(DO)分析</h2>`;
+    html += `<table><tr><th>池别</th><th>均值(mg/L)</th><th>最小值</th><th>最大值</th><th>标准差</th><th>控制标准</th><th>超标率</th></tr>`;
+    const doRows = [
+      ['厌氧池', da.anaerobic, '<0.2'],
+      ['缺氧池', da.anoxic, '<0.5'],
+      ['好氧池(综合)', da.aerobic, '2.5-4.5'],
+    ];
+    doRows.forEach(([label, s, limit]) => {
+      const cls = s?.exceedRate > 20 ? 'danger' : s?.exceedRate > 5 ? 'warning' : 'success';
+      html += `<tr><td>${label}</td><td>${r2(s?.avg)}</td><td>${r2(s?.min)}</td><td>${r2(s?.max)}</td><td>${r2(s?.std)}</td><td>${limit} mg/L</td><td class="${cls}">${r2(s?.exceedRate)}%</td></tr>`;
+    });
+    html += `</table>`;
+
+    // 3. 污泥分析
+    const sa = data.sludgeAnalysis;
+    html += `<h2>三、污泥指标分析</h2>`;
+    html += `<table><tr><th>指标</th><th>均值</th><th>范围</th><th>标准差</th><th>正常范围</th><th>异常率</th></tr>`;
+    const sludgeRows = [
+      ['SV30 (%)', sa.sv30, '15-30%'],
+      ['SVI (mL/g)', sa.svi, '80-150'],
+      ['MLSS (mg/L)', sa.mlss, '2000-4000'],
+    ];
+    sludgeRows.forEach(([label, s, range]) => {
+      const cls = s?.exceedRate > 20 ? 'danger' : s?.exceedRate > 5 ? 'warning' : 'success';
+      html += `<tr><td>${label}</td><td>${r2(s?.avg)}</td><td>${r2(s?.min)}~${r2(s?.max)}</td><td>${r2(s?.std)}</td><td>${range}</td><td class="${cls}">${r2(s?.exceedRate)}%</td></tr>`;
+    });
+    html += `</table>`;
+
+    // 4. 药剂分析
+    const ca = data.chemicalAnalysis;
+    html += `<h2>四、药剂投加分析</h2>`;
+    html += `<table><tr><th>药剂</th><th>月投加总量(kg)</th><th>日均(kg)</th><th>日最大(kg)</th><th>日最小(kg)</th></tr>`;
+    const chemRows = [
+      ['碳源', ca.carbonSource], ['PAC', ca.pac], ['葡萄糖', ca.glucose],
+      ['次氯酸钠', ca.naclo], ['阴离子PAM', ca.anionPam], ['阳离子PAM', ca.cationPam],
+    ];
+    chemRows.forEach(([label, s]) => {
+      if (s) html += `<tr><td>${label}</td><td>${r2(s.total)}</td><td>${r2(s.avg)}</td><td>${r2(s.max)}</td><td>${r2(s.min)}</td></tr>`;
+    });
+    html += `</table>`;
+    if (ca.tonsWaterChemical) {
+      html += `<p>💡 吨水碳源消耗：<strong>${r2(ca.tonsWaterChemical.carbonSource)}</strong> kg/千m³ | 吨水PAC消耗：<strong>${r2(ca.tonsWaterChemical.pac)}</strong> kg/千m³</p>`;
+    }
+
+    // 5. 运营效率
+    const oa = data.operationAnalysis;
+    html += `<h2>五、运营效率分析</h2>`;
+    html += `<table><tr><th>项目</th><th>月总量</th><th>日均值</th><th>日最大</th><th>日最小</th></tr>`;
+    html += `<tr><td>用电量 (kWh)</td><td>${r2(oa.electricity?.total)}</td><td>${r2(oa.electricity?.avg)}</td><td>${r2(oa.electricity?.max)}</td><td>${r2(oa.electricity?.min)}</td></tr>`;
+    html += `<tr><td>进水量 (m³)</td><td>${r2(oa.inFlowTotal?.total)}</td><td>${r2(oa.inFlowTotal?.avg)}</td><td>${r2(oa.inFlowTotal?.max)}</td><td>${r2(oa.inFlowTotal?.min)}</td></tr>`;
+    html += `<tr><td>污泥产量 (吨)</td><td>${r2(oa.sludgeOutput?.total)}</td><td>${r2(oa.sludgeOutput?.avg)}</td><td>${r2(oa.sludgeOutput?.max)}</td><td>${r2(oa.sludgeOutput?.min)}</td></tr>`;
+    html += `</table>`;
+    html += `<p>💡 吨水电耗：<strong>${r2(oa.tonsWaterElec)}</strong> kWh/m³ | 设备运行率：<strong>${r2(oa.operationRate)}%</strong> (${oa.normalDays}/${oa.totalDays}天)</p>`;
+
+    // 6. 脱泥分析
+    const dewa = data.dewateringAnalysis;
+    html += `<h2>六、脱泥生产分析</h2>`;
+    html += `<p>脱泥运行 <strong>${dewa.activeDays}</strong> 天 | 总运行时长 <strong>${r2(dewa.duration?.total)}</strong> h | 总产泥量 <strong>${r2(dewa.sludgeOutput?.total)}</strong> 吨 | 日均产泥 <strong>${r2(dewa.sludgeOutput?.avg)}</strong> 吨</p>`;
+
+    // 7. 预警分析
+    const aa = data.alertAnalysis;
+    html += `<h2>七、预警事件分析</h2>`;
+    html += `<p>本月预警 <strong>${aa.total}</strong> 条：高级 ${aa.high} | 中级 ${aa.medium} | 低级 ${aa.low} | 处理率 ${r2(aa.resolveRate)}%</p>`;
+    if (Object.keys(aa.types || {}).length > 0) {
+      html += `<table><tr><th>预警类型</th><th>数量</th></tr>`;
+      Object.entries(aa.types).sort((a, b) => b[1] - a[1]).forEach(([type, count]) => {
+        html += `<tr><td>${type}</td><td>${count}</td></tr>`;
+      });
+      html += `</table>`;
+    }
+
+    // 8. 问题与建议
+    html += `<h2>八、问题识别与改进建议</h2>`;
+    if (data.issues && data.issues.length > 0) {
+      html += `<h3>⚠️ 识别的问题</h3>`;
+      data.issues.forEach(issue => { html += `<div class="issue">${issue}</div>`; });
+    } else {
+      html += `<div class="suggestion">✅ 本月各项指标运行正常，未发现明显异常</div>`;
+    }
+    if (data.suggestions && data.suggestions.length > 0) {
+      html += `<h3>💡 改进建议</h3>`;
+      data.suggestions.forEach(s => { html += `<div class="suggestion">${s}</div>`; });
+    }
+
+    html += `<div class="footer">污水处理厂运行管理系统 v4.5 | 自动生成于 ${new Date().toLocaleString('zh-CN')}</div>`;
+    html += `</body></html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Disposition', 'inline; filename="analysis_report_' + year + month + '.html"');
+    res.send(html);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', version: '4.5', db: dbType, uptime: process.uptime() });
 });
