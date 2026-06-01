@@ -448,11 +448,6 @@
             { name: 'inFlowTotal', label: '日进水量 (m³)', type: 'number', step: '1', placeholder: '如：10000' },
             { name: 'outFlowTotal', label: '日出水量 (m³)', type: 'number', step: '1', placeholder: '如：9500' },
             { name: 'sludgeOutput', label: '日污泥产量 (吨)', type: 'number', step: '0.1', placeholder: '如：15.5' },
-            { section: '去除率 (%)' },
-            { name: 'codRemoval', label: 'COD去除率 (%)', type: 'number', step: '0.1', placeholder: '如：92.5' },
-            { name: 'nh3Removal', label: '氨氮去除率 (%)', type: 'number', step: '0.1', placeholder: '如：95.0' },
-            { name: 'tnRemoval', label: '总氮去除率 (%)', type: 'number', step: '0.1', placeholder: '如：70.0' },
-            { name: 'tpRemoval', label: '总磷去除率 (%)', type: 'number', step: '0.1', placeholder: '如：90.0' },
             { section: '其他' },
             { name: 'runStatus', label: '运行状态', type: 'select', options: ['正常运行','设备检修','异常停机'], required: true },
             { name: 'remark', label: '备注', type: 'textarea', placeholder: '特殊情况说明...' },
@@ -969,19 +964,6 @@
         });
         html += '</div>';
 
-        // 去除效率
-        if (wq.removalEfficiency) {
-          const re = wq.removalEfficiency;
-          html += '<div style="display:flex;gap:8px;padding:0 8px 8px;">';
-          ['cod','nh3','tn','tp'].forEach(k => {
-            if (re[k] === null) return;
-            const labelMap = { cod:'COD', nh3:'NH₃', tn:'TN', tp:'TP' };
-            const eff = re[k];
-            const effColor = eff >= 90 ? '#52c41a' : eff >= 75 ? '#faad14' : '#f5222d';
-            html += '<span style="padding:2px 8px;border-radius:8px;font-size:11px;background:' + effColor + '20;color:' + effColor + ';">' + labelMap[k] + '去除率 ' + eff + '%</span>';
-          });
-          html += '</div>';
-        }
         html += '</div></div>';
 
         // 水质告警
@@ -2026,6 +2008,26 @@
       html += '<div id="monthlyReportContent"></div>';
       html += '</div></div>';
 
+      // 月度数据分析报告
+      html += '<div class="card mb-12"><div class="card-header"><h3>🔬 月度数据分析报告</h3></div><div class="card-body">';
+      html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">';
+      html += '<select id="analysisYear" style="padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;">';
+      for (let y = curYear; y >= curYear - 3; y--) {
+        html += '<option value="' + y + '"' + (y === curYear ? ' selected' : '') + '>' + y + '年</option>';
+      }
+      html += '</select>';
+      html += '<select id="analysisMonth" style="padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;">';
+      for (let m = 1; m <= 12; m++) {
+        const mv = String(m).padStart(2, '0');
+        html += '<option value="' + mv + '"' + (mv === curMonth ? ' selected' : '') + '>' + m + '月</option>';
+      }
+      html += '</select>';
+      html += '<button class="btn btn-primary" onclick="loadAnalysisReport()">📊 生成分析报告</button>';
+      html += '<button class="btn btn-outline" onclick="exportAnalysisReport()">📥 导出报告</button>';
+      html += '</div>';
+      html += '<div id="analysisReportContent"></div>';
+      html += '</div></div>';
+
       // 年报
       html += '<div class="card mb-12"><div class="card-header"><h3>📆 年报趋势</h3></div><div class="card-body">';
       html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">';
@@ -2190,6 +2192,195 @@
           }
         }, 200);
       } catch (e) { container.innerHTML = '<div class="empty">加载失败：' + e.message + '</div>'; }
+    }
+
+    async function loadAnalysisReport() {
+      const year = document.getElementById('analysisYear').value;
+      const month = document.getElementById('analysisMonth').value;
+      const container = document.getElementById('analysisReportContent');
+      container.innerHTML = '<div class="loading">正在分析数据...</div>';
+      try {
+        const res = await fetch(API + '/api/report/analysis?year=' + year + '&month=' + month, { headers: authHeaders() });
+        const data = await res.json();
+        if (data.error) { container.innerHTML = '<div class="empty">' + data.error + '</div>'; return; }
+
+        const r2 = v => (v !== null && v !== undefined && !isNaN(v)) ? v : '-';
+        const fmtStats = (s, unit) => s && s.avg !== null ? '均值 ' + r2(s.avg) + ' | 范围 ' + r2(s.min) + '~' + r2(s.max) + (unit ? ' ' + unit : '') : '暂无数据';
+        const rateCls = (rate, warn, danger) => rate === null ? '' : rate > (danger||20) ? 'color:#f5222d;font-weight:600;' : rate > (warn||5) ? 'color:#fa8c16;font-weight:600;' : 'color:#52c41a;font-weight:600;';
+
+        let html = '';
+
+        // 概览卡片
+        const wa = data.waterAnalysis || {};
+        const oa = data.operationAnalysis || {};
+        const aa = data.alertAnalysis || {};
+        html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;">';
+        const overviewCards = [
+          ['💧 月进水量', r2(wa.totalInFlow) + ' m³', '#1890ff'],
+          ['💡 月用电量', r2(oa.electricity && oa.electricity.total) + ' kWh', '#fa8c16'],
+          ['⚡ 吨水电耗', r2(oa.tonsWaterElec) + ' kWh/m³', '#722ed1'],
+          ['🚨 预警数量', (aa.total||0) + '条(处理率' + r2(aa.resolveRate) + '%)', '#f5222d'],
+        ];
+        overviewCards.forEach(([label, value, color]) => {
+          html += '<div style="background:#fff;border:1px solid #f0f0f0;border-radius:8px;padding:10px;text-align:center;border-top:3px solid ' + color + ';">';
+          html += '<div style="font-size:11px;color:#8c8c8c;">' + label + '</div>';
+          html += '<div style="font-size:15px;font-weight:700;color:' + color + ';">' + value + '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+
+        // 水质分析
+        html += '<div style="background:#fafafa;border-radius:8px;padding:12px;margin-bottom:10px;">';
+        html += '<div style="font-size:13px;font-weight:700;color:#1a1a2e;margin-bottom:8px;">💧 一、进出水水质分析（' + (wa.totalRecords||0) + '条记录）</div>';
+        html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<tr style="background:#1a1a2e;color:#fff;"><th style="padding:6px 8px;text-align:left;">指标</th><th style="padding:6px 8px;">进水均值</th><th style="padding:6px 8px;">出水均值</th><th style="padding:6px 8px;">排放标准</th><th style="padding:6px 8px;">超标率</th></tr>';
+        const wRows = [
+          ['COD (mg/L)', wa.inCod, wa.outCod, '≤50', wa.codExceedRate],
+          ['氨氮 (mg/L)', wa.inNh3, wa.outNh3, '≤5', wa.nh3ExceedRate],
+          ['总氮 (mg/L)', wa.inTn, wa.outTn, '≤15', wa.tnExceedRate],
+          ['总磷 (mg/L)', wa.inTp, wa.outTp, '≤0.5', wa.tpExceedRate],
+        ];
+        wRows.forEach(([label, inS, outS, limit, er], i) => {
+          const bg = i % 2 === 0 ? '#fff' : '#f8f9fa';
+          html += '<tr style="background:' + bg + ';"><td style="padding:6px 8px;font-weight:500;">' + label + '</td>';
+          html += '<td style="padding:6px 8px;text-align:center;">' + r2(inS && inS.avg) + '</td>';
+          html += '<td style="padding:6px 8px;text-align:center;">' + r2(outS && outS.avg) + '</td>';
+          html += '<td style="padding:6px 8px;text-align:center;">' + limit + '</td>';
+          html += '<td style="padding:6px 8px;text-align:center;' + rateCls(er) + '">' + r2(er) + '%</td></tr>';
+        });
+        html += '</table></div>';
+        if (wa.inPh && wa.inPh.avg) html += '<div style="font-size:11px;color:#8c8c8c;margin-top:6px;">进水pH：均值 ' + r2(wa.inPh.avg) + ' | 范围 ' + r2(wa.inPh.min) + '~' + r2(wa.inPh.max) + '</div>';
+        html += '</div>';
+
+        // DO分析
+        const da = data.doAnalysis || {};
+        html += '<div style="background:#fafafa;border-radius:8px;padding:12px;margin-bottom:10px;">';
+        html += '<div style="font-size:13px;font-weight:700;color:#1a1a2e;margin-bottom:8px;">🔍 二、溶解氧(DO)分析（' + (da.totalRecords||0) + '条记录）</div>';
+        html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<tr style="background:#1a1a2e;color:#fff;"><th style="padding:6px 8px;text-align:left;">池别</th><th style="padding:6px 8px;">均值(mg/L)</th><th style="padding:6px 8px;">范围</th><th style="padding:6px 8px;">标准差</th><th style="padding:6px 8px;">控制标准</th><th style="padding:6px 8px;">超标率</th></tr>';
+        const doRows = [['厌氧池', da.anaerobic, '<0.2'], ['缺氧池', da.anoxic, '<0.5'], ['好氧池(综合)', da.aerobic, '2.5-4.5']];
+        doRows.forEach(([label, s, limit], i) => {
+          const bg = i % 2 === 0 ? '#fff' : '#f8f9fa';
+          html += '<tr style="background:' + bg + ';"><td style="padding:6px 8px;font-weight:500;">' + label + '</td>';
+          html += '<td style="padding:6px 8px;text-align:center;">' + r2(s && s.avg) + '</td>';
+          html += '<td style="padding:6px 8px;text-align:center;">' + r2(s && s.min) + '~' + r2(s && s.max) + '</td>';
+          html += '<td style="padding:6px 8px;text-align:center;">' + r2(s && s.std) + '</td>';
+          html += '<td style="padding:6px 8px;text-align:center;">' + limit + '</td>';
+          html += '<td style="padding:6px 8px;text-align:center;' + rateCls(s && s.exceedRate) + '">' + r2(s && s.exceedRate) + '%</td></tr>';
+        });
+        html += '</table></div></div>';
+
+        // 污泥分析
+        const sa = data.sludgeAnalysis || {};
+        html += '<div style="background:#fafafa;border-radius:8px;padding:12px;margin-bottom:10px;">';
+        html += '<div style="font-size:13px;font-weight:700;color:#1a1a2e;margin-bottom:8px;">🦠 三、污泥指标分析（' + (sa.totalRecords||0) + '条记录）</div>';
+        html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<tr style="background:#1a1a2e;color:#fff;"><th style="padding:6px 8px;text-align:left;">指标</th><th style="padding:6px 8px;">均值</th><th style="padding:6px 8px;">范围</th><th style="padding:6px 8px;">正常范围</th><th style="padding:6px 8px;">异常率</th></tr>';
+        const sRows = [['SV30 (%)', sa.sv30, '15-30%'], ['SVI (mL/g)', sa.svi, '80-150'], ['MLSS (mg/L)', sa.mlss, '2000-4000']];
+        sRows.forEach(([label, s, range], i) => {
+          const bg = i % 2 === 0 ? '#fff' : '#f8f9fa';
+          html += '<tr style="background:' + bg + ';"><td style="padding:6px 8px;font-weight:500;">' + label + '</td>';
+          html += '<td style="padding:6px 8px;text-align:center;">' + r2(s && s.avg) + '</td>';
+          html += '<td style="padding:6px 8px;text-align:center;">' + r2(s && s.min) + '~' + r2(s && s.max) + '</td>';
+          html += '<td style="padding:6px 8px;text-align:center;">' + range + '</td>';
+          html += '<td style="padding:6px 8px;text-align:center;' + rateCls(s && s.exceedRate) + '">' + r2(s && s.exceedRate) + '%</td></tr>';
+        });
+        html += '</table></div></div>';
+
+        // 药剂分析
+        const ca = data.chemicalAnalysis || {};
+        html += '<div style="background:#fafafa;border-radius:8px;padding:12px;margin-bottom:10px;">';
+        html += '<div style="font-size:13px;font-weight:700;color:#1a1a2e;margin-bottom:8px;">🧪 四、药剂投加分析（' + (ca.totalRecords||0) + '条记录）</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px;">';
+        const chemItems = [['碳源', ca.carbonSource, '#1890ff'], ['PAC', ca.pac, '#52c41a'], ['葡萄糖', ca.glucose, '#fa8c16'], ['次氯酸钠', ca.naclo, '#722ed1'], ['阴离子PAM', ca.anionPam, '#13c2c2'], ['阳离子PAM', ca.cationPam, '#eb2f96']];
+        chemItems.forEach(([label, s, color]) => {
+          if (!s) return;
+          html += '<div style="background:#fff;border:1px solid #f0f0f0;border-radius:6px;padding:8px;border-left:3px solid ' + color + ';">';
+          html += '<div style="font-size:11px;color:#8c8c8c;">' + label + '</div>';
+          html += '<div style="font-size:14px;font-weight:700;color:' + color + ';">' + r2(s.total) + ' <small style="font-size:10px;font-weight:400;">kg</small></div>';
+          html += '<div style="font-size:10px;color:#8c8c8c;">日均 ' + r2(s.avg) + ' kg</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+        if (ca.tonsWaterChemical) {
+          html += '<div style="font-size:11px;color:#8c8c8c;">💡 吨水碳源消耗：' + r2(ca.tonsWaterChemical.carbonSource) + ' kg/千m³ | 吨水PAC消耗：' + r2(ca.tonsWaterChemical.pac) + ' kg/千m³</div>';
+        }
+        html += '</div>';
+
+        // 运营效率
+        html += '<div style="background:#fafafa;border-radius:8px;padding:12px;margin-bottom:10px;">';
+        html += '<div style="font-size:13px;font-weight:700;color:#1a1a2e;margin-bottom:8px;">📊 五、运营效率分析</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px;">';
+        const opItems = [
+          ['月用电量', r2(oa.electricity && oa.electricity.total) + ' kWh', '日均 ' + r2(oa.electricity && oa.electricity.avg) + ' kWh', '#fa8c16'],
+          ['月进水量', r2(oa.inFlowTotal && oa.inFlowTotal.total) + ' m³', '日均 ' + r2(oa.inFlowTotal && oa.inFlowTotal.avg) + ' m³', '#1890ff'],
+          ['月污泥产量', r2(oa.sludgeOutput && oa.sludgeOutput.total) + ' 吨', '日均 ' + r2(oa.sludgeOutput && oa.sludgeOutput.avg) + ' 吨', '#722ed1'],
+        ];
+        opItems.forEach(([label, val, sub, color]) => {
+          html += '<div style="background:#fff;border:1px solid #f0f0f0;border-radius:6px;padding:8px;border-left:3px solid ' + color + ';">';
+          html += '<div style="font-size:11px;color:#8c8c8c;">' + label + '</div>';
+          html += '<div style="font-size:14px;font-weight:700;color:' + color + ';">' + val + '</div>';
+          html += '<div style="font-size:10px;color:#8c8c8c;">' + sub + '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+        html += '<div style="display:flex;gap:12px;font-size:12px;color:#595959;">';
+        html += '<span>⚡ 吨水电耗：<b>' + r2(oa.tonsWaterElec) + '</b> kWh/m³</span>';
+        html += '<span>🔧 运行率：<b style="' + rateCls(oa.operationRate, null, 90) + '">' + r2(oa.operationRate) + '%</b> (' + (oa.normalDays||0) + '/' + (oa.totalDays||0) + '天)</span>';
+        html += '</div></div>';
+
+        // 预警分析
+        html += '<div style="background:#fafafa;border-radius:8px;padding:12px;margin-bottom:10px;">';
+        html += '<div style="font-size:13px;font-weight:700;color:#1a1a2e;margin-bottom:8px;">🚨 六、预警事件分析</div>';
+        html += '<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px;">';
+        html += '<span>总计 <b>' + (aa.total||0) + '</b> 条</span>';
+        html += '<span style="color:#f5222d;">高级 <b>' + (aa.high||0) + '</b></span>';
+        html += '<span style="color:#fa8c16;">中级 <b>' + (aa.medium||0) + '</b></span>';
+        html += '<span style="color:#52c41a;">低级 <b>' + (aa.low||0) + '</b></span>';
+        html += '<span>处理率 <b style="' + rateCls(aa.resolveRate, null, 50) + '">' + r2(aa.resolveRate) + '%</b></span>';
+        html += '</div>';
+        if (aa.types && Object.keys(aa.types).length > 0) {
+          html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">';
+          Object.entries(aa.types).sort((a,b)=>b[1]-a[1]).forEach(([type, count]) => {
+            html += '<span style="background:#fff7e6;border-radius:10px;padding:2px 8px;font-size:11px;color:#d48806;">' + type + ': ' + count + '</span>';
+          });
+          html += '</div>';
+        }
+        html += '</div>';
+
+        // 问题与建议
+        const issues = data.issues || [];
+        const suggestions = data.suggestions || [];
+        if (issues.length > 0 || suggestions.length > 0) {
+          html += '<div style="background:#fafafa;border-radius:8px;padding:12px;">';
+          html += '<div style="font-size:13px;font-weight:700;color:#1a1a2e;margin-bottom:8px;">💡 七、问题识别与改进建议</div>';
+          if (issues.length > 0) {
+            html += '<div style="font-size:12px;font-weight:600;color:#f5222d;margin-bottom:4px;">⚠️ 识别的问题</div>';
+            issues.forEach(issue => {
+              html += '<div style="background:#fff2f0;border-left:3px solid #f5222d;padding:6px 10px;margin:4px 0;border-radius:4px;font-size:12px;">' + issue + '</div>';
+            });
+          } else {
+            html += '<div style="background:#f6ffed;border-left:3px solid #52c41a;padding:6px 10px;margin:4px 0;border-radius:4px;font-size:12px;color:#52c41a;">✅ 本月各项指标运行正常</div>';
+          }
+          if (suggestions.length > 0) {
+            html += '<div style="font-size:12px;font-weight:600;color:#52c41a;margin:8px 0 4px;">🔧 改进建议</div>';
+            suggestions.forEach(s => {
+              html += '<div style="background:#f6ffed;border-left:3px solid #52c41a;padding:6px 10px;margin:4px 0;border-radius:4px;font-size:12px;">' + s + '</div>';
+            });
+          }
+          html += '</div>';
+        }
+
+        container.innerHTML = html;
+      } catch (e) { container.innerHTML = '<div class="empty">分析失败：' + e.message + '</div>'; }
+    }
+
+    function exportAnalysisReport() {
+      const year = document.getElementById('analysisYear').value;
+      const month = document.getElementById('analysisMonth').value;
+      const url = API + '/api/report/analysis/export?year=' + year + '&month=' + month + '&token=' + localStorage.getItem('sb_token');
+      window.open(url, '_blank');
+      toast('正在生成分析报告（可在浏览器中打印为PDF）...');
     }
 
     async function loadAuditLog() {
