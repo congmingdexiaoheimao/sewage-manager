@@ -183,10 +183,16 @@ const CHINESE_FIELDS = {
   tasks: { id:'编号', title:'任务标题', type:'任务类型', priority:'优先级', status:'状态', assignedTo:'负责人', deadline:'截止日期', remark:'备注', createTime:'创建时间' },
   users: { id:'编号', username:'用户名', name:'姓名', role:'角色', phone:'手机号', groupId:'班组', status:'状态', createTime:'创建时间' },
   exportLog: { id:'编号', table:'导出表', count:'导出条数', operator:'操作员', time:'导出时间' },
+  equipment: { id:'编号', name:'设备名称', code:'设备编号', type:'设备类型', manufacturer:'生产厂家', model:'型号规格', purchaseDate:'购置日期', installDate:'安装日期', location:'安装位置', status:'运行状态', warrantyExpire:'保修到期', specs:'技术参数', remark:'备注', operator:'录入人', createTime:'创建时间', updateTime:'更新时间', updatedBy:'更新人' },
+  equipment_log: { id:'编号', equipmentId:'设备ID', date:'日期', shift:'班次', operationHours:'运行时长(h)', runStatus:'运行状态', temperature:'温度(°C)', pressure:'压力(MPa)', vibration:'振动值', current:'电流(A)', remark:'备注', operator:'操作员', createTime:'创建时间' },
+  maintenance: { id:'编号', equipmentId:'设备ID', equipmentName:'设备名称', type:'工单类型', priority:'优先级', status:'状态', faultDesc:'故障描述', repairDesc:'维修内容', assignedTo:'维修人员', reportedBy:'报修人', reportedTime:'报修时间', startTime:'开始维修', finishTime:'完成时间', cost:'维修费用(元)', parts:'更换配件', remark:'备注', createTime:'创建时间', updateTime:'更新时间', updatedBy:'更新人' },
+  shift_schedule: { id:'编号', date:'排班日期', shift:'班次', team:'班组', members:'成员', remark:'备注', operator:'制定人', createTime:'创建时间', updateTime:'更新时间' },
+  shift_handover: { id:'编号', date:'交班日期', shift:'班次', team:'班组', handoverPerson:'交班人', receivePerson:'接班人', runStatus:'运行状态', doStatus:'DO情况', waterQuality:'水质情况', equipmentStatus:'设备情况', chemicalStatus:'药剂情况', alerts:'预警情况', pendingItems:'待处理事项', remark:'备注', createTime:'创建时间' },
+  audit_log: { id:'编号', time:'操作时间', operator:'操作人', operatorRole:'角色', action:'操作类型', targetTable:'操作表', targetId:'记录ID', beforeData:'修改前', afterData:'修改后', ipAddr:'IP地址', userAgent:'终端信息' },
 };
 
 // ==================== 建表与迁移 ====================
-const ALL_TABLES = ['do_inspection','hourly_water','daily_lab','weekly_lab','sludge_special','dewatering','chemical_dosing','chemical_inventory','daily_summary','alerts','tasks','exportLog','users','daily','inspect','lab'];
+const ALL_TABLES = ['do_inspection','hourly_water','daily_lab','weekly_lab','sludge_special','dewatering','chemical_dosing','chemical_inventory','daily_summary','alerts','tasks','exportLog','users','daily','inspect','lab','equipment','equipment_log','maintenance','shift_schedule','shift_handover','audit_log'];
 
 /** 所有表结构定义：表名 → 列定义字符串 */
 const TABLE_SCHEMAS = {
@@ -207,6 +213,15 @@ const TABLE_SCHEMAS = {
   daily: 'id TEXT PRIMARY KEY, date TEXT, operator TEXT, remark TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
   inspect: 'id TEXT PRIMARY KEY, date TEXT, operator TEXT, remark TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
   lab: 'id TEXT PRIMARY KEY, date TEXT, operator TEXT, remark TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  // v4.5 新增：设备台账
+  equipment: 'id TEXT PRIMARY KEY, name TEXT, code TEXT, type TEXT, manufacturer TEXT, model TEXT, purchaseDate TEXT, installDate TEXT, location TEXT, status TEXT, warrantyExpire TEXT, specs TEXT, remark TEXT, operator TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  equipment_log: 'id TEXT PRIMARY KEY, equipmentId TEXT, date TEXT, shift TEXT, operationHours TEXT, runStatus TEXT, temperature TEXT, pressure TEXT, vibration TEXT, current TEXT, remark TEXT, operator TEXT, createTime TEXT',
+  maintenance: 'id TEXT PRIMARY KEY, equipmentId TEXT, equipmentName TEXT, type TEXT, priority TEXT, status TEXT, faultDesc TEXT, repairDesc TEXT, assignedTo TEXT, reportedBy TEXT, reportedTime TEXT, startTime TEXT, finishTime TEXT, cost TEXT, parts TEXT, remark TEXT, createTime TEXT, updateTime TEXT, updatedBy TEXT',
+  // v4.5 新增：交班排班
+  shift_schedule: 'id TEXT PRIMARY KEY, date TEXT, shift TEXT, team TEXT, members TEXT, remark TEXT, operator TEXT, createTime TEXT, updateTime TEXT',
+  shift_handover: 'id TEXT PRIMARY KEY, date TEXT, shift TEXT, team TEXT, handoverPerson TEXT, receivePerson TEXT, runStatus TEXT, doStatus TEXT, waterQuality TEXT, equipmentStatus TEXT, chemicalStatus TEXT, alerts TEXT, pendingItems TEXT, remark TEXT, createTime TEXT',
+  // v4.5 新增：运营日志审计
+  audit_log: 'id TEXT PRIMARY KEY, time TEXT, operator TEXT, operatorRole TEXT, action TEXT, targetTable TEXT, targetId TEXT, beforeData TEXT, afterData TEXT, ipAddr TEXT, userAgent TEXT',
 };
 
 function initDB() {
@@ -294,11 +309,11 @@ function initDB() {
     const doItems = [];
     for (let day = 29; day >= 0; day--) {
       const d = new Date(today); d.setDate(d.getDate() - day); const ds = d.toISOString().slice(0,10);
-      for (const shift of ['早班','中班','晚班']) {
+      for (const shift of ['白班','夜班']) {
         for (const series of ['east','west']) {
           doItems.push([
             'do_' + ds + '_' + shift + '_' + series, ds, shift, series, '系统', 
-            rand(0.1, 0.6, 2), rand(0.3, 1.2, 2), rand(1.5, 3.5, 2), rand(1.5, 3.5, 2), rand(2.0, 3.8, 2), rand(2.0, 3.8, 2),
+            rand(0.05, 0.18, 2), rand(0.1, 0.45, 2), rand(2.5, 4.3, 2), rand(2.5, 4.3, 2), rand(2.5, 4.3, 2), rand(2.5, 4.3, 2),
             '', 'group1', now
           ]);
         }
@@ -348,7 +363,7 @@ function initDB() {
     const cdItems = [];
     for (let day = 29; day >= 0; day--) {
       const d = new Date(today); d.setDate(d.getDate() - day); const ds = d.toISOString().slice(0,10);
-      for (const shift of ['早班','中班','晚班']) {
+      for (const shift of ['白班','夜班']) {
         cdItems.push([
           'cd_' + ds + '_' + shift, ds, shift, '系统',
           rand(150, 300, 1), rand(50, 100, 1), rand(80, 200, 1), rand(2, 8, 1), rand(3, 10, 1), rand(20, 60, 1),
@@ -672,19 +687,19 @@ function checkAlerts(table, record) {
   }
 
   if (table === 'do_inspection') {
-    // 不同池的DO下限阈值（mg/L）：厌氧池 < 0.2 预警，缺氧池 < 0.5 预警，好氧池 < 1.0 预警
+    // 不同池的DO下限阈值（mg/L）：厌氧池 < 0.2 预警，缺氧池 < 0.5 预警，好氧池 2.5-4.5
     const doThresholds = {
-      '厌氧池': { low: 0.2, high: 0.8, lowLabel: '<0.2', normalRange: '0.2-0.8' },
-      '缺氧池': { low: 0.5, high: 1.5, lowLabel: '<0.5', normalRange: '0.5-1.5' },
-      '好氧池1': { low: 1.0, high: 4.0, lowLabel: '<1.0', normalRange: '1.0-4.0' },
-      '好氧池2': { low: 1.0, high: 4.0, lowLabel: '<1.0', normalRange: '1.0-4.0' },
-      '好氧池3': { low: 1.0, high: 4.0, lowLabel: '<1.0', normalRange: '1.0-4.0' },
-      '好氧池4': { low: 1.0, high: 4.0, lowLabel: '<1.0', normalRange: '1.0-4.0' },
+      '厌氧池': { low: 0, high: 0.2, lowLabel: '<0', normalRange: '<0.2' },
+      '缺氧池': { low: 0, high: 0.5, lowLabel: '<0', normalRange: '<0.5' },
+      '好氧池1': { low: 2.5, high: 4.5, lowLabel: '<2.5', normalRange: '2.5-4.5' },
+      '好氧池2': { low: 2.5, high: 4.5, lowLabel: '<2.5', normalRange: '2.5-4.5' },
+      '好氧池3': { low: 2.5, high: 4.5, lowLabel: '<2.5', normalRange: '2.5-4.5' },
+      '好氧池4': { low: 2.5, high: 4.5, lowLabel: '<2.5', normalRange: '2.5-4.5' },
     };
     const checkDO = (val, pool) => {
       if (val !== undefined && val !== null && val !== '') {
         const v = Number(val);
-        const th = doThresholds[pool] || { low: 0.5, high: 4.0, normalRange: '0.5-4.0' };
+        const th = doThresholds[pool] || { low: 2.5, high: 4.5, normalRange: '2.5-4.5' };
         if (v < th.low) newAlerts.push({ id: 'alt_' + Date.now() + '_do_low_' + pool, time: now, type: 'DO异常', level: 'high', source: 'DO巡检', title: pool + '溶解氧过低: ' + v + 'mg/L', detail: record.date + ' ' + record.series + '系列 ' + pool + ' DO=' + v + 'mg/L（正常: ' + th.normalRange + 'mg/L）', status: 'active' });
         if (v > th.high) newAlerts.push({ id: 'alt_' + Date.now() + '_do_high_' + pool, time: now, type: 'DO异常', level: 'medium', source: 'DO巡检', title: pool + '溶解氧过高: ' + v + 'mg/L', detail: record.date + ' ' + record.series + '系列 ' + pool + ' DO=' + v + 'mg/L（正常: ' + th.normalRange + 'mg/L）', status: 'active' });
       }
@@ -931,8 +946,8 @@ app.get('/api/trends', authMiddleware, (req, res) => {
     result.thresholds = [
       { label: '厌氧上限(0.2)', value: 0.2, color: '#e74c3c', dash: [4,4] },
       { label: '缺氧上限(0.5)', value: 0.5, color: '#3498db', dash: [4,4] },
-      { label: '好氧下限(1.5)', value: 1.5, color: '#2ecc71', dash: [4,4] },
-      { label: '好氧上限(3.5)', value: 3.5, color: '#f39c12', dash: [4,4] },
+      { label: '好氧下限(2.5)', value: 2.5, color: '#2ecc71', dash: [4,4] },
+      { label: '好氧上限(4.5)', value: 4.5, color: '#f39c12', dash: [4,4] },
     ];
 
     // DO统计摘要 — 基于东系列
@@ -940,13 +955,14 @@ app.get('/api/trends', authMiddleware, (req, res) => {
     const targetDaily = seriesFilter === 'west' ? westDaily : eastDaily;
     pools.forEach(p => {
       const arr = dates.map(d => targetDaily[d]?.[p]).filter(v => v != null);
-      const thresholds = { anaerobic: 0.2, anoxic: 0.5, aerobic1: 1.5, aerobic2: 1.5, aerobic3: 1.5, aerobic4: 1.5 };
-      const upperLimits = { anaerobic: null, anoxic: null, aerobic1: 3.5, aerobic2: 3.5, aerobic3: 3.5, aerobic4: 3.5 };
+      const thresholds = { anaerobic: 0.2, anoxic: 0.5, aerobic1: 2.5, aerobic2: 2.5, aerobic3: 2.5, aerobic4: 2.5 };
+      const upperLimits = { anaerobic: 0.2, anoxic: 0.5, aerobic1: 4.5, aerobic2: 4.5, aerobic3: 4.5, aerobic4: 4.5 };
       let exceedCount = 0;
       if (p.startsWith('aerobic')) {
         exceedCount = arr.filter(v => v < thresholds[p] || v > upperLimits[p]).length;
       } else {
-        exceedCount = arr.filter(v => v > thresholds[p]).length;
+        // 厌氧池和缺氧池：超过上限即异常（DO应保持低值）
+        exceedCount = arr.filter(v => v > upperLimits[p]).length;
       }
       summary[p] = {
         ...calcStats(arr),
@@ -1808,16 +1824,16 @@ app.post('/api/seed', authMiddleware, (req, res) => {
     const d = new Date(); d.setDate(d.getDate() - i);
     const dateStr = d.toISOString().slice(0, 10);
     ['east', 'west'].forEach(series => {
-      ['白班', '晚班'].forEach(shift => {
+      ['白班', '夜班'].forEach(shift => {
         doData.push({
           id: 'do_' + dateStr + '_' + series + '_' + shift,
           date: dateStr, shift, series, operator: series === 'east' ? '周班组1A' : '吴班组1B',
-          anaerobic: round2(0.15 + Math.random() * 0.3),
-          anoxic: round2(0.3 + Math.random() * 0.5),
-          aerobic1: round2(1.5 + Math.random() * 1.5),
-          aerobic2: round2(1.8 + Math.random() * 1.2),
-          aerobic3: round2(2.0 + Math.random() * 1.0),
-          aerobic4: round2(2.5 + Math.random() * 0.8),
+          anaerobic: round2(0.05 + Math.random() * 0.12),
+          anoxic: round2(0.1 + Math.random() * 0.35),
+          aerobic1: round2(2.5 + Math.random() * 1.8),
+          aerobic2: round2(2.5 + Math.random() * 1.8),
+          aerobic3: round2(2.5 + Math.random() * 1.8),
+          aerobic4: round2(2.5 + Math.random() * 1.8),
           remark: '', createTime: dateStr + 'T08:00:00.000Z',
         });
       });
@@ -1919,7 +1935,7 @@ app.post('/api/seed', authMiddleware, (req, res) => {
   for (let i = 29; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
     const dateStr = d.toISOString().slice(0, 10);
-    ['早班', '中班'].forEach(shift => {
+    ['白班', '夜班'].forEach(shift => {
       dosingData.push({
         id: 'cd_' + dateStr + '_' + shift,
         date: dateStr, shift, operator: '褚班组3A',
@@ -1998,9 +2014,510 @@ app.post('/api/seed', authMiddleware, (req, res) => {
 function round1(v) { return Math.round(v * 10) / 10; }
 function round2(v) { return Math.round(v * 100) / 100; }
 
+// ==================== 运营日志审计钩子 ====================
+function writeAuditLog(req, action, targetTable, targetId, beforeData, afterData) {
+  try {
+    const logId = 'audit_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+    const operator = req.userName || (req.user && req.user.name) || 'unknown';
+    const operatorRole = req.userRole || '';
+    const ipAddr = req.headers['x-forwarded-for'] || req.connection.remoteAddress || '';
+    const userAgent = (req.headers['user-agent'] || '').slice(0, 120);
+    insertRow('audit_log', {
+      id: logId,
+      time: new Date().toISOString(),
+      operator,
+      operatorRole,
+      action,
+      targetTable: targetTable || '',
+      targetId: targetId || '',
+      beforeData: beforeData ? JSON.stringify(beforeData).slice(0, 500) : '',
+      afterData: afterData ? JSON.stringify(afterData).slice(0, 500) : '',
+      ipAddr,
+      userAgent,
+    });
+  } catch (e) {
+    // 审计日志失败不影响主业务
+  }
+}
+
+// ==================== 设备台账管理 ====================
+// 获取设备列表（含故障统计）
+app.get('/api/equipment/list', authMiddleware, (req, res) => {
+  try {
+    const { status, type, keyword } = req.query;
+    let sql = 'SELECT * FROM equipment WHERE 1=1';
+    const params = [];
+    if (status) { sql += ' AND status=?'; params.push(status); }
+    if (type) { sql += ' AND type=?'; params.push(type); }
+    if (keyword) { sql += ' AND (name LIKE ? OR code LIKE ? OR location LIKE ?)'; params.push('%'+keyword+'%', '%'+keyword+'%', '%'+keyword+'%'); }
+    sql += ' ORDER BY createTime DESC LIMIT 200';
+    const equipList = db.prepare(sql).all(...params);
+
+    // 每台设备统计待处理维修工单数
+    const pendingMap = {};
+    const pendingRows = db.prepare("SELECT equipmentId, COUNT(*) as cnt FROM maintenance WHERE status IN ('待处理','处理中') GROUP BY equipmentId").all();
+    pendingRows.forEach(r => { pendingMap[r.equipmentId] = r.cnt; });
+
+    const result = equipList.map(e => ({
+      ...e,
+      pendingMaintenance: pendingMap[e.id] || 0,
+    }));
+    res.json({ data: result, total: result.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 新增/更新设备
+app.post('/api/equipment', authMiddleware, (req, res) => {
+  if (!req.userPermissions.canManage && !['厂长','副厂长','运营管理部','技术管理部'].includes(req.userRole)) {
+    return res.status(403).json({ error: '无权限操作设备台账' });
+  }
+  try {
+    const record = { ...req.body, id: req.body.id || 'equip_' + Date.now(), operator: req.userName, createTime: req.body.createTime || new Date().toISOString(), updateTime: new Date().toISOString(), updatedBy: req.userName };
+    insertRow('equipment', record);
+    writeAuditLog(req, '新增设备', 'equipment', record.id, null, record);
+    res.json({ success: true, id: record.id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/equipment/:id', authMiddleware, (req, res) => {
+  if (!req.userPermissions.canManage && !['厂长','副厂长','运营管理部','技术管理部'].includes(req.userRole)) {
+    return res.status(403).json({ error: '无权限操作设备台账' });
+  }
+  try {
+    const old = db.prepare('SELECT * FROM equipment WHERE id=?').get(req.params.id);
+    const update = { ...req.body, updateTime: new Date().toISOString(), updatedBy: req.userName };
+    const keys = Object.keys(update).filter(k => k !== 'id');
+    if (keys.length === 0) return res.status(400).json({ error: '无更新字段' });
+    const setStr = keys.map(k => '[' + k + ']=?').join(',');
+    db.prepare('UPDATE equipment SET ' + setStr + ' WHERE id=?').run(...keys.map(k => update[k]), req.params.id);
+    writeAuditLog(req, '修改设备', 'equipment', req.params.id, old, update);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 获取单台设备详情（含最近运行记录和维修记录）
+app.get('/api/equipment/:id/detail', authMiddleware, (req, res) => {
+  try {
+    const equip = db.prepare('SELECT * FROM equipment WHERE id=?').get(req.params.id);
+    if (!equip) return res.status(404).json({ error: '设备不存在' });
+    const logs = db.prepare('SELECT * FROM equipment_log WHERE equipmentId=? ORDER BY date DESC, shift DESC LIMIT 20').all(req.params.id);
+    const maintenances = db.prepare('SELECT * FROM maintenance WHERE equipmentId=? ORDER BY createTime DESC LIMIT 20').all(req.params.id);
+    res.json({ ...equip, logs, maintenances });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 设备运行记录
+app.post('/api/equipment_log', authMiddleware, (req, res) => {
+  try {
+    const record = { ...req.body, id: req.body.id || 'elog_' + Date.now(), operator: req.userName, createTime: new Date().toISOString() };
+    insertRow('equipment_log', record);
+    res.json({ success: true, id: record.id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 维修工单列表
+app.get('/api/maintenance/list', authMiddleware, (req, res) => {
+  try {
+    const { status, priority, equipmentId } = req.query;
+    let sql = 'SELECT * FROM maintenance WHERE 1=1';
+    const params = [];
+    if (status) { sql += ' AND status=?'; params.push(status); }
+    if (priority) { sql += ' AND priority=?'; params.push(priority); }
+    if (equipmentId) { sql += ' AND equipmentId=?'; params.push(equipmentId); }
+    sql += ' ORDER BY createTime DESC LIMIT 100';
+    const data = db.prepare(sql).all(...params);
+    res.json({ data, total: data.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 新增维修工单
+app.post('/api/maintenance', authMiddleware, (req, res) => {
+  try {
+    const record = { ...req.body, id: req.body.id || 'maint_' + Date.now(), reportedBy: req.userName, reportedTime: new Date().toISOString(), status: req.body.status || '待处理', createTime: new Date().toISOString(), updateTime: new Date().toISOString(), updatedBy: req.userName };
+    insertRow('maintenance', record);
+    writeAuditLog(req, '新增维修工单', 'maintenance', record.id, null, record);
+    // 自动预警
+    if (record.priority === '高' || record.priority === '紧急') {
+      insertRow('alerts', { id: 'alt_maint_' + record.id, time: new Date().toISOString(), type: '设备故障', level: record.priority === '紧急' ? 'high' : 'medium', source: '维修工单', title: record.equipmentName + '：' + record.faultDesc, detail: '工单优先级：' + record.priority, status: 'active' });
+    }
+    res.json({ success: true, id: record.id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 更新维修工单状态
+app.put('/api/maintenance/:id', authMiddleware, (req, res) => {
+  try {
+    const old = db.prepare('SELECT * FROM maintenance WHERE id=?').get(req.params.id);
+    const update = { ...req.body, updateTime: new Date().toISOString(), updatedBy: req.userName };
+    const keys = Object.keys(update).filter(k => k !== 'id');
+    if (keys.length === 0) return res.status(400).json({ error: '无更新字段' });
+    const setStr = keys.map(k => '[' + k + ']=?').join(',');
+    db.prepare('UPDATE maintenance SET ' + setStr + ' WHERE id=?').run(...keys.map(k => update[k]), req.params.id);
+    writeAuditLog(req, '更新维修工单', 'maintenance', req.params.id, old, update);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 设备统计概览
+app.get('/api/equipment/stats', authMiddleware, (req, res) => {
+  try {
+    const total = db.prepare('SELECT COUNT(*) as cnt FROM equipment').get().cnt;
+    const normal = db.prepare("SELECT COUNT(*) as cnt FROM equipment WHERE status='正常运行'").get().cnt;
+    const fault = db.prepare("SELECT COUNT(*) as cnt FROM equipment WHERE status='故障停机'").get().cnt;
+    const maintain = db.prepare("SELECT COUNT(*) as cnt FROM equipment WHERE status='检修中'").get().cnt;
+    const pendingWork = db.prepare("SELECT COUNT(*) as cnt FROM maintenance WHERE status IN ('待处理','处理中')").get().cnt;
+    const urgentWork = db.prepare("SELECT COUNT(*) as cnt FROM maintenance WHERE status IN ('待处理','处理中') AND priority IN ('高','紧急')").get().cnt;
+    res.json({ total, normal, fault, maintain, other: total - normal - fault - maintain, pendingWork, urgentWork });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ==================== 交班/排班管理 ====================
+// 排班计划
+app.get('/api/shift_schedule/list', authMiddleware, (req, res) => {
+  try {
+    const { dateFrom, dateTo, team } = req.query;
+    let sql = 'SELECT * FROM shift_schedule WHERE 1=1';
+    const params = [];
+    if (dateFrom) { sql += ' AND date>=?'; params.push(dateFrom); }
+    if (dateTo) { sql += ' AND date<=?'; params.push(dateTo); }
+    if (team) { sql += ' AND team=?'; params.push(team); }
+    sql += ' ORDER BY date DESC, shift ASC LIMIT 200';
+    const data = db.prepare(sql).all(...params);
+    res.json({ data, total: data.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/shift_schedule', authMiddleware, (req, res) => {
+  if (!req.userPermissions.canManage && !['厂长','副厂长','运营管理部'].includes(req.userRole)) {
+    return res.status(403).json({ error: '无权限管理排班' });
+  }
+  try {
+    const record = { ...req.body, id: req.body.id || 'sch_' + Date.now(), operator: req.userName, createTime: new Date().toISOString(), updateTime: new Date().toISOString() };
+    insertRow('shift_schedule', record);
+    writeAuditLog(req, '新增排班', 'shift_schedule', record.id, null, record);
+    res.json({ success: true, id: record.id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/shift_schedule/:id', authMiddleware, (req, res) => {
+  if (!req.userPermissions.canManage && !['厂长','副厂长','运营管理部'].includes(req.userRole)) {
+    return res.status(403).json({ error: '无权限修改排班' });
+  }
+  try {
+    const update = { ...req.body, updateTime: new Date().toISOString() };
+    const keys = Object.keys(update).filter(k => k !== 'id');
+    const setStr = keys.map(k => '[' + k + ']=?').join(',');
+    db.prepare('UPDATE shift_schedule SET ' + setStr + ' WHERE id=?').run(...keys.map(k => update[k]), req.params.id);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 本周排班概览
+app.get('/api/shift_schedule/week', authMiddleware, (req, res) => {
+  try {
+    const today = new Date();
+    const dayOfWeek = today.getDay() || 7;
+    const monday = new Date(today); monday.setDate(today.getDate() - dayOfWeek + 1);
+    const sunday = new Date(today); sunday.setDate(today.getDate() - dayOfWeek + 7);
+    const from = monday.toISOString().slice(0, 10);
+    const to = sunday.toISOString().slice(0, 10);
+    const data = db.prepare('SELECT * FROM shift_schedule WHERE date>=? AND date<=? ORDER BY date ASC, shift ASC').all(from, to);
+    res.json({ data, weekStart: from, weekEnd: to });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 交接班记录
+app.get('/api/shift_handover/list', authMiddleware, (req, res) => {
+  try {
+    const { dateFrom, dateTo, team } = req.query;
+    let sql = 'SELECT * FROM shift_handover WHERE 1=1';
+    const params = [];
+    if (dateFrom) { sql += ' AND date>=?'; params.push(dateFrom); }
+    if (dateTo) { sql += ' AND date<=?'; params.push(dateTo); }
+    if (team) { sql += ' AND team=?'; params.push(team); }
+    sql += ' ORDER BY createTime DESC LIMIT 100';
+    const data = db.prepare(sql).all(...params);
+    res.json({ data, total: data.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/shift_handover', authMiddleware, (req, res) => {
+  try {
+    const record = { ...req.body, id: req.body.id || 'ho_' + Date.now(), handoverPerson: req.body.handoverPerson || req.userName, createTime: new Date().toISOString() };
+    insertRow('shift_handover', record);
+    writeAuditLog(req, '提交交班记录', 'shift_handover', record.id, null, record);
+    res.json({ success: true, id: record.id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 今日交班状态
+app.get('/api/shift_handover/today', authMiddleware, (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const data = db.prepare('SELECT * FROM shift_handover WHERE date=? ORDER BY shift ASC').all(today);
+    res.json({ data, date: today });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ==================== 运营日志审计 ====================
+app.get('/api/audit_log/list', authMiddleware, (req, res) => {
+  if (!req.userPermissions.canManage && !['厂长','副厂长','运营管理部','技术管理部'].includes(req.userRole)) {
+    return res.status(403).json({ error: '无权限查看审计日志' });
+  }
+  try {
+    const { operator, action, targetTable, dateFrom, dateTo } = req.query;
+    let sql = 'SELECT * FROM audit_log WHERE 1=1';
+    const params = [];
+    if (operator) { sql += ' AND operator LIKE ?'; params.push('%'+operator+'%'); }
+    if (action) { sql += ' AND action=?'; params.push(action); }
+    if (targetTable) { sql += ' AND targetTable=?'; params.push(targetTable); }
+    if (dateFrom) { sql += ' AND time>=?'; params.push(dateFrom); }
+    if (dateTo) { sql += ' AND time<=?'; params.push(dateTo + 'T23:59:59'); }
+    const total = db.prepare(sql.replace('SELECT *', 'SELECT COUNT(*) as cnt')).get(...params).cnt;
+    sql += ' ORDER BY time DESC LIMIT 200';
+    const data = db.prepare(sql).all(...params);
+    res.json({ data, total });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 审计统计
+app.get('/api/audit_log/stats', authMiddleware, (req, res) => {
+  if (!req.userPermissions.canManage && !['厂长','副厂长','运营管理部','技术管理部'].includes(req.userRole)) {
+    return res.status(403).json({ error: '无权限' });
+  }
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const week = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+    const todayCount = db.prepare('SELECT COUNT(*) as cnt FROM audit_log WHERE time>=?').get(today + 'T00:00:00').cnt;
+    const weekCount = db.prepare('SELECT COUNT(*) as cnt FROM audit_log WHERE time>=?').get(week + 'T00:00:00').cnt;
+    const byAction = db.prepare('SELECT action, COUNT(*) as cnt FROM audit_log WHERE time>=? GROUP BY action ORDER BY cnt DESC LIMIT 10').all(week + 'T00:00:00');
+    const byOperator = db.prepare('SELECT operator, operatorRole, COUNT(*) as cnt FROM audit_log WHERE time>=? GROUP BY operator ORDER BY cnt DESC LIMIT 10').all(week + 'T00:00:00');
+    res.json({ todayCount, weekCount, byAction, byOperator });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ==================== 月报/年报自动生成 ====================
+app.get('/api/report/monthly', authMiddleware, (req, res) => {
+  try {
+    const year = req.query.year || new Date().getFullYear().toString();
+    const month = req.query.month || String(new Date().getMonth() + 1).padStart(2, '0');
+    const dateFrom = year + '-' + month + '-01';
+    const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+    const dateTo = year + '-' + month + '-' + String(lastDay).padStart(2, '0');
+
+    // 每日汇总
+    const dailySummaries = db.prepare('SELECT * FROM daily_summary WHERE date>=? AND date<=? ORDER BY date ASC').all(dateFrom, dateTo);
+
+    // 进出水月均值（从小时数据汇总）
+    const waterAvg = db.prepare(`
+      SELECT AVG(CAST(inCod AS REAL)) as avgInCod, AVG(CAST(outCod AS REAL)) as avgOutCod,
+             AVG(CAST(inNh3 AS REAL)) as avgInNh3, AVG(CAST(outNh3 AS REAL)) as avgOutNh3,
+             AVG(CAST(inTn AS REAL)) as avgInTn, AVG(CAST(outTn AS REAL)) as avgOutTn,
+             AVG(CAST(inTp AS REAL)) as avgInTp, AVG(CAST(outTp AS REAL)) as avgOutTp,
+             SUM(CAST(inFlow AS REAL)) as totalInFlow, SUM(CAST(outFlow AS REAL)) as totalOutFlow
+      FROM hourly_water WHERE date>=? AND date<=?
+    `).get(dateFrom, dateTo);
+
+    // 化验月均值
+    const labAvg = db.prepare(`
+      SELECT AVG(CAST(cod AS REAL)) as avgCod, AVG(CAST(nh3 AS REAL)) as avgNh3,
+             AVG(CAST(tn AS REAL)) as avgTn, AVG(CAST(tp AS REAL)) as avgTp,
+             COUNT(*) as testDays
+      FROM daily_lab WHERE date>=? AND date<=?
+    `).get(dateFrom, dateTo);
+
+    // 出水超标次数
+    const codExceed = db.prepare("SELECT COUNT(*) as cnt FROM hourly_water WHERE date>=? AND date<=? AND CAST(outCod AS REAL)>50").get(dateFrom, dateTo).cnt;
+    const nh3Exceed = db.prepare("SELECT COUNT(*) as cnt FROM hourly_water WHERE date>=? AND date<=? AND CAST(outNh3 AS REAL)>5").get(dateFrom, dateTo).cnt;
+    const tnExceed = db.prepare("SELECT COUNT(*) as cnt FROM hourly_water WHERE date>=? AND date<=? AND CAST(outTn AS REAL)>15").get(dateFrom, dateTo).cnt;
+
+    // 药剂投加月汇总
+    const dosingSum = db.prepare(`
+      SELECT SUM(CAST(carbonSource AS REAL)) as totalCarbonSource,
+             SUM(CAST(pac AS REAL)) as totalPac,
+             SUM(CAST(glucose AS REAL)) as totalGlucose,
+             SUM(CAST(naclo AS REAL)) as totalNaclo
+      FROM chemical_dosing WHERE date>=? AND date<=?
+    `).get(dateFrom, dateTo);
+
+    // 脱泥月汇总
+    const dewaterSum = db.prepare(`
+      SELECT SUM(CAST(sludgeOutput AS REAL)) as totalSludge,
+             SUM(CAST(duration AS REAL)) as totalDuration,
+             COUNT(*) as days
+      FROM dewatering WHERE date>=? AND date<=?
+    `).get(dateFrom, dateTo);
+
+    // 运行总水量/用电
+    const summarySum = db.prepare(`
+      SELECT SUM(CAST(electricity AS REAL)) as totalElec,
+             SUM(CAST(inFlowTotal AS REAL)) as totalInFlow,
+             SUM(CAST(outFlowTotal AS REAL)) as totalOutFlow,
+             COUNT(*) as reportDays,
+             SUM(CASE WHEN runStatus='正常运行' THEN 1 ELSE 0 END) as normalDays
+      FROM daily_summary WHERE date>=? AND date<=?
+    `).get(dateFrom, dateTo);
+
+    // 预警统计
+    const alertStats = db.prepare(`
+      SELECT COUNT(*) as totalAlerts,
+             SUM(CASE WHEN level='high' THEN 1 ELSE 0 END) as highAlerts,
+             SUM(CASE WHEN status='resolved' THEN 1 ELSE 0 END) as resolvedAlerts
+      FROM alerts WHERE time>=? AND time<=?
+    `).get(dateFrom + 'T00:00:00', dateTo + 'T23:59:59');
+
+    const round2 = v => v !== null && v !== undefined && !isNaN(v) ? Math.round(v * 100) / 100 : null;
+
+    res.json({
+      period: { year, month, dateFrom, dateTo, daysInMonth: lastDay },
+      waterQuality: {
+        avgInCod: round2(waterAvg.avgInCod), avgOutCod: round2(waterAvg.avgOutCod),
+        avgInNh3: round2(waterAvg.avgInNh3), avgOutNh3: round2(waterAvg.avgOutNh3),
+        avgInTn: round2(waterAvg.avgInTn), avgOutTn: round2(waterAvg.avgOutTn),
+        avgInTp: round2(waterAvg.avgInTp), avgOutTp: round2(waterAvg.avgOutTp),
+        totalInFlow: round2(waterAvg.totalInFlow), totalOutFlow: round2(waterAvg.totalOutFlow),
+        codExceedHours: codExceed, nh3ExceedHours: nh3Exceed, tnExceedHours: tnExceed,
+      },
+      labQuality: {
+        avgCod: round2(labAvg.avgCod), avgNh3: round2(labAvg.avgNh3),
+        avgTn: round2(labAvg.avgTn), avgTp: round2(labAvg.avgTp), testDays: labAvg.testDays,
+      },
+      operation: {
+        totalElec: round2(summarySum.totalElec), totalInFlow: round2(summarySum.totalInFlow),
+        totalOutFlow: round2(summarySum.totalOutFlow), reportDays: summarySum.reportDays,
+        normalDays: summarySum.normalDays, operationRate: summarySum.reportDays > 0 ? round2(summarySum.normalDays / lastDay * 100) : null,
+      },
+      chemical: {
+        totalCarbonSource: round2(dosingSum.totalCarbonSource), totalPac: round2(dosingSum.totalPac),
+        totalGlucose: round2(dosingSum.totalGlucose), totalNaclo: round2(dosingSum.totalNaclo),
+      },
+      dewatering: { totalSludge: round2(dewaterSum.totalSludge), totalDuration: round2(dewaterSum.totalDuration), activeDays: dewaterSum.days },
+      alerts: { total: alertStats.totalAlerts, high: alertStats.highAlerts, resolved: alertStats.resolvedAlerts },
+      dailySummaries,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/report/yearly', authMiddleware, (req, res) => {
+  try {
+    const year = req.query.year || new Date().getFullYear().toString();
+
+    const monthlyData = [];
+    for (let m = 1; m <= 12; m++) {
+      const month = String(m).padStart(2, '0');
+      const dateFrom = year + '-' + month + '-01';
+      const lastDay = new Date(parseInt(year), m, 0).getDate();
+      const dateTo = year + '-' + month + '-' + String(lastDay).padStart(2, '0');
+
+      const waterAvg = db.prepare('SELECT AVG(CAST(outCod AS REAL)) as avgOutCod, AVG(CAST(outNh3 AS REAL)) as avgOutNh3, AVG(CAST(outTn AS REAL)) as avgOutTn, AVG(CAST(outTp AS REAL)) as avgOutTp, SUM(CAST(inFlow AS REAL)) as totalInFlow FROM hourly_water WHERE date>=? AND date<=?').get(dateFrom, dateTo);
+      const summarySum = db.prepare('SELECT SUM(CAST(electricity AS REAL)) as totalElec, SUM(CAST(outFlowTotal AS REAL)) as totalOutFlow, SUM(CAST(sludgeOutput AS REAL)) as totalSludge FROM daily_summary WHERE date>=? AND date<=?').get(dateFrom, dateTo);
+      const dosingSum = db.prepare('SELECT SUM(CAST(carbonSource AS REAL)) as totalCarbonSource, SUM(CAST(pac AS REAL)) as totalPac FROM chemical_dosing WHERE date>=? AND date<=?').get(dateFrom, dateTo);
+
+      const round2 = v => v !== null && v !== undefined && !isNaN(v) ? Math.round(v * 100) / 100 : null;
+      monthlyData.push({
+        month: m, label: month + '月',
+        avgOutCod: round2(waterAvg.avgOutCod), avgOutNh3: round2(waterAvg.avgOutNh3),
+        avgOutTn: round2(waterAvg.avgOutTn), avgOutTp: round2(waterAvg.avgOutTp),
+        totalInFlow: round2(waterAvg.totalInFlow), totalOutFlow: round2(summarySum.totalOutFlow),
+        totalElec: round2(summarySum.totalElec), totalSludge: round2(summarySum.totalSludge),
+        totalCarbonSource: round2(dosingSum.totalCarbonSource), totalPac: round2(dosingSum.totalPac),
+      });
+    }
+
+    // 全年汇总
+    const dateFrom = year + '-01-01', dateTo = year + '-12-31';
+    const yearTotal = db.prepare('SELECT SUM(CAST(electricity AS REAL)) as totalElec, SUM(CAST(inFlowTotal AS REAL)) as totalInFlow, SUM(CAST(sludgeOutput AS REAL)) as totalSludge FROM daily_summary WHERE date>=? AND date<=?').get(dateFrom, dateTo);
+    const yearDosing = db.prepare('SELECT SUM(CAST(carbonSource AS REAL)) as totalCS, SUM(CAST(pac AS REAL)) as totalPac, SUM(CAST(naclo AS REAL)) as totalNaclo FROM chemical_dosing WHERE date>=? AND date<=?').get(dateFrom, dateTo);
+    const r2 = v => v !== null && v !== undefined && !isNaN(v) ? Math.round(v * 100) / 100 : null;
+
+    res.json({
+      year,
+      monthlyData,
+      yearSummary: {
+        totalElec: r2(yearTotal.totalElec), totalInFlow: r2(yearTotal.totalInFlow),
+        totalSludge: r2(yearTotal.totalSludge), totalCarbonSource: r2(yearDosing.totalCS),
+        totalPac: r2(yearDosing.totalPac), totalNaclo: r2(yearDosing.totalNaclo),
+      },
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 月报/年报 Excel 导出
+app.get('/api/report/monthly/export', authMiddleware, async (req, res) => {
+  try {
+    const ExcelJS = require('exceljs');
+    const year = req.query.year || new Date().getFullYear().toString();
+    const month = req.query.month || String(new Date().getMonth() + 1).padStart(2, '0');
+    const dateFrom = year + '-' + month + '-01';
+    const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+    const dateTo = year + '-' + month + '-' + String(lastDay).padStart(2, '0');
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = '污水处理厂运行管理系统 v4.5';
+
+    // Sheet1: 月报汇总
+    const sheetSummary = workbook.addWorksheet('月报汇总');
+    sheetSummary.columns = [{ header: '项目', key: 'item', width: 24 }, { header: '数值', key: 'value', width: 20 }, { header: '单位', key: 'unit', width: 12 }];
+    sheetSummary.getRow(1).font = { bold: true, size: 12 };
+
+    // 读取日均水质
+    const waterAvg = db.prepare('SELECT AVG(CAST(inCod AS REAL)) as avgInCod, AVG(CAST(outCod AS REAL)) as avgOutCod, AVG(CAST(inNh3 AS REAL)) as avgInNh3, AVG(CAST(outNh3 AS REAL)) as avgOutNh3, AVG(CAST(inTn AS REAL)) as avgInTn, AVG(CAST(outTn AS REAL)) as avgOutTn, AVG(CAST(inTp AS REAL)) as avgInTp, AVG(CAST(outTp AS REAL)) as avgOutTp, SUM(CAST(inFlow AS REAL)) as totalInFlow FROM hourly_water WHERE date>=? AND date<=?').get(dateFrom, dateTo);
+    const summarySum = db.prepare('SELECT SUM(CAST(electricity AS REAL)) as totalElec, SUM(CAST(inFlowTotal AS REAL)) as totalInFlow, SUM(CAST(outFlowTotal AS REAL)) as totalOutFlow, SUM(CAST(sludgeOutput AS REAL)) as totalSludge, COUNT(*) as reportDays FROM daily_summary WHERE date>=? AND date<=?').get(dateFrom, dateTo);
+    const dosingSum = db.prepare('SELECT SUM(CAST(carbonSource AS REAL)) as totalCS, SUM(CAST(pac AS REAL)) as totalPac, SUM(CAST(naclo AS REAL)) as totalNaclo FROM chemical_dosing WHERE date>=? AND date<=?').get(dateFrom, dateTo);
+    const r2 = v => v !== null && v !== undefined && !isNaN(v) ? Math.round(v * 100) / 100 : '-';
+
+    const summaryRows = [
+      ['报告期', year + '年' + month + '月', ''],
+      ['', '', ''],
+      ['【水量】', '', ''],
+      ['月累计进水量', r2(summarySum.totalInFlow), 'm³'],
+      ['月累计出水量', r2(summarySum.totalOutFlow), 'm³'],
+      ['', '', ''],
+      ['【进水水质（月均）】', '', ''],
+      ['进水COD', r2(waterAvg.avgInCod), 'mg/L'],
+      ['进水氨氮', r2(waterAvg.avgInNh3), 'mg/L'],
+      ['进水总氮', r2(waterAvg.avgInTn), 'mg/L'],
+      ['进水总磷', r2(waterAvg.avgInTp), 'mg/L'],
+      ['', '', ''],
+      ['【出水水质（月均）】', '', ''],
+      ['出水COD', r2(waterAvg.avgOutCod), 'mg/L（限值≤50）'],
+      ['出水氨氮', r2(waterAvg.avgOutNh3), 'mg/L（限值≤5）'],
+      ['出水总氮', r2(waterAvg.avgOutTn), 'mg/L（限值≤15）'],
+      ['出水总磷', r2(waterAvg.avgOutTp), 'mg/L（限值≤0.5）'],
+      ['', '', ''],
+      ['【运营情况】', '', ''],
+      ['月用电量', r2(summarySum.totalElec), 'kWh'],
+      ['污泥产量', r2(summarySum.totalSludge), '吨'],
+      ['日报记录天数', summarySum.reportDays, '天'],
+      ['', '', ''],
+      ['【药剂投加（月累计）】', '', ''],
+      ['碳源', r2(dosingSum.totalCS), 'kg'],
+      ['PAC', r2(dosingSum.totalPac), 'kg'],
+      ['次氯酸钠', r2(dosingSum.totalNaclo), 'kg'],
+    ];
+    summaryRows.forEach(([item, value, unit]) => sheetSummary.addRow({ item, value, unit }));
+
+    // Sheet2: 每日明细
+    const dailySummaries = db.prepare('SELECT * FROM daily_summary WHERE date>=? AND date<=? ORDER BY date ASC').all(dateFrom, dateTo);
+    if (dailySummaries.length > 0) {
+      const sheetDaily = workbook.addWorksheet('每日运行明细');
+      const keys = Object.keys(dailySummaries[0]);
+      const cols = keys.map(k => ({ header: CHINESE_FIELDS.daily_summary[k] || k, key: k, width: 16 }));
+      sheetDaily.columns = cols;
+      sheetDaily.getRow(1).font = { bold: true };
+      dailySummaries.forEach(r => sheetDaily.addRow(r));
+    }
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="monthly_report_' + year + month + '.xlsx"');
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ==================== 健康检查 + 微信域名校验 ====================
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', version: '4.4', db: dbType, uptime: process.uptime() });
+  res.json({ status: 'ok', version: '4.5', db: dbType, uptime: process.uptime() });
 });
 
 // 微信小程序业务域名校验文件支持
