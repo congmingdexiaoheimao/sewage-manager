@@ -2520,10 +2520,8 @@ app.get('/api/report/monthly/export', authMiddleware, async (req, res) => {
 
 // ==================== 健康检查 + 微信域名校验 ====================
 // ==================== 月度数据分析报告 ====================
-app.get('/api/report/analysis', authMiddleware, (req, res) => {
-  try {
-    const year = req.query.year || new Date().getFullYear().toString();
-    const month = req.query.month || String(new Date().getMonth() + 1).padStart(2, '0');
+// 共享函数：生成月度分析报告数据（供 /api/report/analysis 和 /api/report/analysis/export 共用）
+function generateAnalysisData(year, month, db) {
     const dateFrom = year + '-' + month + '-01';
     const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
     const dateTo = year + '-' + month + '-' + String(lastDay).padStart(2, '0');
@@ -2790,7 +2788,8 @@ app.get('/api/report/analysis', authMiddleware, (req, res) => {
     if (fluctuation.flowCv !== null && fluctuation.flowCv > 30) processEvaluation.push('进水量波动较大（CV=' + fluctuation.flowCv + '%），需关注雨季影响和调节池液位');
     if (processEvaluation.length === 0) processEvaluation.push('各项工艺参数波动在合理范围内，整体运行稳定');
 
-    res.json({
+
+  return {
       period: { year, month, dateFrom, dateTo, daysInMonth: lastDay },
       generatedAt: new Date().toISOString(),
       waterAnalysis,
@@ -2805,22 +2804,29 @@ app.get('/api/report/analysis', authMiddleware, (req, res) => {
       charts: { water: waterChart, do: doChart, sludge: sludgeChart, chemical: chemChart, operation: opsChart },
       fluctuation,
       processEvaluation,
-    });
+    };
+}
+
+
+app.get('/api/report/analysis', authMiddleware, (req, res) => {
+  try {
+    const year = req.query.year || new Date().getFullYear().toString();
+    const month = req.query.month || String(new Date().getMonth() + 1).padStart(2, '0');
+    const data = generateAnalysisData(year, month, db);
+    res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
+
 });
 
-// 月度分析报告 Word 文档导出
-app.get('/api/report/analysis/export', authMiddleware, async (req, res) => {
+// 月度分析报告 HTML 导出
+app.get('/api/report/analysis/export', authMiddleware, (req, res) => {
   try {
     const year = req.query.year || new Date().getFullYear().toString();
     const month = req.query.month || String(new Date().getMonth() + 1).padStart(2, '0');
 
-    // 调用同一个分析接口获取数据
-    const analysisUrl = 'http://localhost:' + PORT + '/api/report/analysis?year=' + year + '&month=' + month;
-    const token = req.headers.authorization?.replace('Bearer ', '') || '';
-    const analysisRes = await fetch(analysisUrl, { headers: { Authorization: 'Bearer ' + token } });
-    const data = await analysisRes.json();
-    if (data.error) return res.status(500).json({ error: '分析接口失败：' + data.error });
+    // 直接调用共享函数，无需内部 HTTP 请求
+    const data = generateAnalysisData(year, month, db);
+    if (!data || data.error) return res.status(500).json({ error: '分析失败：' + (data?.error || '未知错误') });
 
     // 生成 HTML 格式报告（可在浏览器中打印为 PDF）
     const r2 = v => v !== null && v !== undefined && !isNaN(v) ? v : '-';
