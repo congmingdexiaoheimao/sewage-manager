@@ -1309,6 +1309,7 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
       warnings: waterQualityWarnings,
     },
     sludgeStatus,
+  const pacAdjust = Math.round(pacSludgeAdjust * pacTrendAdjust * 100) / 100;  // PAC总调整因子
     recommendations: [
       {
         chemical: '碳源', key: 'carbonSource', value: carbonSource, unit: 'kg/d',
