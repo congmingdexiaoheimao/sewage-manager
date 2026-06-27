@@ -1236,6 +1236,10 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
   }
 
   const pac = Math.round(pacBase * pacSludgeAdjust * pacTrendAdjust * 100) / 100;
+  
+  // --- 三氯化铁（PAC替代选项） ---
+  const feCl3Base = Math.round(pRemoveKg * 2.7 / 0.40 * (162.5 / 56) * 100) / 100;
+  const feCl3 = Math.round(feCl3Base * pacAdjust * pacTrendAdjust * 100) / 100;
 
   // --- 阴离子PAM ---
   let anionBase = (inFlow || 0) * 0.002;
