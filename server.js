@@ -1355,7 +1355,6 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
         history: compareWithHistory('naclo', naclo),
         tip: '根据出水粪大肠菌群及余氯指标动态调整',
       },
-      },
       {
         chemical: '三氯化铁', key: 'feCl3', value: feCl3, unit: 'kg/d',
         range: [Math.round(feCl3 * 0.7 * 100) / 100, Math.round(feCl3 * 1.3 * 100) / 100],
