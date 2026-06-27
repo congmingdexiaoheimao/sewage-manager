@@ -1210,6 +1210,7 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
   // --- PAC（除磷） ---
   const targetTpEffluent = 0.5;
   const tpToRemove = Math.max(0, (inTp || 0) - targetTpEffluent);
+  const pRemoveKg = Math.round((tpToRemove || 0) * (inFlow || 0) / 1000 * 100) / 100;  // 除磷量(kg/d)
   let pacBase = Math.round(tpToRemove * (inFlow || 0) / 1000 * 1.3 / 0.29 * (102 / 54) * 100) / 100; // 治污者说专业公式：去除1kgP需1.3kgAl，PAC(29%)投加量=总磷去除量×8.48
 
   let pacSludgeAdjust = 1.0;
@@ -1236,11 +1237,12 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
   }
 
   const pac = Math.round(pacBase * pacSludgeAdjust * pacTrendAdjust * 100) / 100;
+
+  // --- 三氯化铁（PAC替代选项）---
+  const feCl3Base = Math.round(pRemoveKg * 2.7 / 0.40 * 100) / 100;  // Fe:P=2.7:1, FeCl3 40%
+  const feCl3 = Math.round(feCl3Base * pacTrendAdjust * 100) / 100;  // 使用趋势调整因子
+
   
-  const pRemoveKg = Math.round((tpToRemove || 0) * (inFlow || 0) / 1000 * 100) / 100;  // 除磷量(kg/d)
-  // --- 三氯化铁（PAC替代选项） ---
-  const feCl3Base = Math.round(pRemoveKg * 2.7 / 0.40 * (162.5 / 56) * 100) / 100;
-  const feCl3 = Math.round(feCl3Base * pacAdjust * pacTrendAdjust * 100) / 100;
 
   // --- 阴离子PAM ---
   let anionBase = (inFlow || 0) * 0.002;
