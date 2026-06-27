@@ -1237,6 +1237,7 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
 
   const pac = Math.round(pacBase * pacSludgeAdjust * pacTrendAdjust * 100) / 100;
   
+  const pRemoveKg = Math.round((tpToRemove || 0) * (inFlow || 0) / 1000 * 100) / 100;  // 除磷量(kg/d)
   // --- 三氯化铁（PAC替代选项） ---
   const feCl3Base = Math.round(pRemoveKg * 2.7 / 0.40 * (162.5 / 56) * 100) / 100;
   const feCl3 = Math.round(feCl3Base * pacAdjust * pacTrendAdjust * 100) / 100;
