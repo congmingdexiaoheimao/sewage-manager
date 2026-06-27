@@ -2440,15 +2440,15 @@
         html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">';
         html += '<tr style="background:#1a1a2e;color:#fff;"><th style="padding:6px 8px;text-align:left;">工艺指标</th><th style="padding:6px 8px;">变异系数(CV)</th><th style="padding:6px 8px;">波动程度</th><th style="padding:6px 8px;">标准差</th></tr>';
         const cvRows = [
-          ['出水COD', fl.waterCodCv, waterAnalysis.outCod],
-          ['出水氨氮', fl.waterNh3Cv, waterAnalysis.outNh3],
-          ['出水总氮', fl.waterTnCv, waterAnalysis.outTn],
-          ['出水总磷', fl.waterTpCv, waterAnalysis.outTp],
-          ['好氧池DO', fl.doAerobicCv, doAnalysis.aerobic],
-          ['SV30', fl.sv30Cv, sludgeAnalysis.sv30],
-          ['SVI', fl.sviCv, sludgeAnalysis.svi],
-          ['MLSS', fl.mlssCv, sludgeAnalysis.mlss],
-          ['进水量', fl.flowCv, waterAnalysis.inFlow],
+          ['出水COD', fl.waterCodCv, wa.outCod],
+          ['出水氨氮', fl.waterNh3Cv, wa.outNh3],
+          ['出水总氮', fl.waterTnCv, wa.outTn],
+          ['出水总磷', fl.waterTpCv, wa.outTp],
+          ['好氧池DO', fl.doAerobicCv, da.aerobic],
+          ['SV30', fl.sv30Cv, sa.sv30],
+          ['SVI', fl.sviCv, sa.svi],
+          ['MLSS', fl.mlssCv, sa.mlss],
+          ['进水量', fl.flowCv, wa.inFlow],
         ];
         cvRows.forEach(([label, cvVal, s], i) => {
           if (cvVal === null || cvVal === undefined) return;
