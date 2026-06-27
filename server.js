@@ -1082,15 +1082,15 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
     });
     const sample = recent24h.length >= 4 ? recent24h : recentWater.slice(-24);
 
-    inCod = avg(sample.map(r => Number(r.inCod)).filter(v => v > 0));
-    inNh3 = avg(sample.map(r => Number(r.inNh3)).filter(v => v > 0));
-    inTn = avg(sample.map(r => Number(r.inTn)).filter(v => v > 0));
-    inTp = avg(sample.map(r => Number(r.inTp)).filter(v => v > 0));
-    inFlow = avg(sample.map(r => Number(r.inFlow)).filter(v => v > 0));
-    outCod = avg(sample.map(r => Number(r.outCod)).filter(v => v > 0));
-    outNh3 = avg(sample.map(r => Number(r.outNh3)).filter(v => v > 0));
-    outTn = avg(sample.map(r => Number(r.outTn)).filter(v => v > 0));
-    outTp = avg(sample.map(r => Number(r.outTp)).filter(v => v > 0));
+    inCod = avg(sample, 'inCod') || 0;
+    inNh3 = avg(sample, 'inNh3') || 0;
+    inTn = avg(sample, 'inTn') || 0;
+    inTp = avg(sample, 'inTp') || 0;
+    inFlow = avg(sample, 'inFlow') || 0;
+    outCod = avg(sample, 'outCod') || 0;
+    outNh3 = avg(sample, 'outNh3') || 0;
+    outTn = avg(sample, 'outTn') || 0;
+    outTp = avg(sample, 'outTp') || 0;
 
     dataSource = '近24小时小时进出水数据（自动）';
   } else {
