@@ -1299,6 +1299,7 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
   if (sludgeStatus.sv30.status === '偏高' && !sludgeStatus.svi.status.includes('膨胀')) sludgeWarnings.push('SV30偏高但SVI正常，可能为负荷偏高型污泥，非膨胀性');
 
   // ===== 组装响应 =====
+  const pacAdjust = Math.round(pacSludgeAdjust * pacTrendAdjust * 100) / 100;  // PAC总调整因子
   res.json({
     generatedAt: new Date().toISOString(),
     dataSource,
@@ -1309,7 +1310,6 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
       warnings: waterQualityWarnings,
     },
     sludgeStatus,
-  const pacAdjust = Math.round(pacSludgeAdjust * pacTrendAdjust * 100) / 100;  // PAC总调整因子
     recommendations: [
       {
         chemical: '碳源', key: 'carbonSource', value: carbonSource, unit: 'kg/d',
