@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>污水厂运行管理后台</title>
+<style>
+  :root{
+    --bg-0:#0a0f1a; --bg-1:#0f1726; --bg-2:#16213e;
+    --glass:rgba(255,255,255,0.04); --glass-strong:rgba(255,255,255,0.07);
+    --border:rgba(255,255,255,0.08); --border-strong:rgba(255,255,255,0.14);
+    --text:#e8eef7; --text-dim:#8b9bb4; --text-faint:#5a6a82;
+    --cyan:#22d3ee; --cyan-soft:rgba(34,211,238,0.15); --cyan-glow:rgba(34,211,238,0.4);
+    --blue:#3b82f6; --green:#34d399; --amber:#fbbf24; --red:#f87171; --purple:#a78bfa;
+    --radius:16px; --radius-sm:10px;
+    --shadow:0 8px 32px rgba(0,0,0,0.4);
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:var(--font); background:var(--bg-0); color:var(--text);
+    -webkit-font-smoothing:antialiased; overflow:hidden;
+  }
+  /* 背景光晕 */
+  body::before{
+    content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(900px 600px at 12% 8%, rgba(34,211,238,0.10), transparent 60%),
+      radial-gradient(800px 600px at 88% 92%, rgba(59,130,246,0.10), transparent 60%);
+  }
+
+  /* ============ 登录层 ============ */
+  #loginView{
+    position:fixed; inset:0; z-index:100; display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(1200px 800px at 50% 30%, rgba(34,211,238,0.08), transparent 60%), var(--bg-0);
+  }
+  .login-card{
+    position:relative; z-index:1; width:380px; max-width:92vw;
+    background:var(--glass); backdrop-filter:blur(30px) saturate(160%);
+    border:1px solid var(--border); border-radius:24px; padding:40px 34px;
+    box-shadow:var(--shadow); animation:rise .6s cubic-bezier(.16,1,.3,1);
+  }
+  @keyframes rise{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+  .login-logo{
+    width:56px;height:56px;border-radius:16px;margin:0 auto 18px;
+    display:flex;align-items:center;justify-content:center;font-size:28px;
+    background:linear-gradient(135deg,var(--cyan),var(--blue));
+    box-shadow:0 8px 24px var(--cyan-glow);
+  }
+  .login-card h1{text-align:center;font-size:20px;font-weight:600;margin-bottom:4px}
+  .login-card .sub{text-align:center;color:var(--text-dim);font-size:13px;margin-bottom:28px}
+  .field{margin-bottom:16px}
+  .field label{display:block;font-size:12px;color:var(--text-dim);margin-bottom:7px;letter-spacing:.3px}
+  .field input{
+    width:100%;padding:12px 14px;font-size:14px;font-family:var(--font);
+    background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:var(--radius-sm);
+    color:var(--text);transition:.2s; outline:none;
+  }
+  .field input:focus{border-color:var(--cyan);box-shadow:0 0 0 3px var(--cyan-soft)}
+  .btn-primary{
+    width:100%;padding:13px;font-size:15px;font-weight:600;font-family:var(--font);
+    border:none;border-radius:var(--radius-sm);cursor:pointer;color:#04121a;
+    background:linear-gradient(135deg,var(--cyan),var(--blue));
+    transition:transform .2s,box-shadow .2s;
+  }
+  .btn-primary:hover{transform:translateY(-1px);box-shadow:0 8px 24px var(--cyan-glow)}
+  .btn-primary:active{transform:translateY(0)}
+  .btn-primary:disabled{opacity:.6;cursor:wait}
+  .login-err{color:var(--red);font-size:13px;text-align:center;margin-top:14px;min-height:18px}
+  .login-hint{text-align:center;color:var(--text-faint);font-size:12px;margin-top:20px;line-height:1.7}
+  .login-hint code{color:var(--cyan);background:var(--cyan-soft);padding:1px 6px;border-radius:5px;font-family:Consolas,monospace}
+
+  /* ============ 主框架 ============ */
+  #app{display:none;height:100vh;position:relative;z-index:1}
+  .sidebar{
+    position:fixed;left:0;top:0;bottom:0;width:230px;
+    background:var(--bg-1);border-right:1px solid var(--border);
+    display:flex;flex-direction:column;padding:20px 0;
+  }
+  .brand{display:flex;align-items:center;gap:11px;padding:0 22px 22px;border-bottom:1px solid var(--border)}
+  .brand .logo{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:20px;background:linear-gradient(135deg,var(--cyan),var(--blue));box-shadow:0 4px 14px var(--cyan-glow)}
+  .brand .t{font-size:15px;font-weight:600;line-height:1.2}
+  .brand .s{font-size:11px;color:var(--text-faint);margin-top:2px}
+  nav{flex:1;padding:16px 12px;overflow-y:auto}
+  .nav-item{
+    display:flex;align-items:center;gap:11px;padding:11px 14px;margin-bottom:4px;
+    border-radius:var(--radius-sm);cursor:pointer;color:var(--text-dim);font-size:14px;
+    transition:.18s;border:1px solid transparent;
+  }
+  .nav-item .ico{font-size:17px;width:20px;text-align:center}
+  .nav-item:hover{background:var(--glass);color:var(--text)}
+  .nav-item.active{background:var(--cyan-soft);color:var(--cyan);border-color:rgba(34,211,238,0.25)}
+  .nav-section{font-size:11px;color:var(--text-faint);padding:16px 14px 8px;letter-spacing:.8px;text-transform:uppercase}
+
+  .main{margin-left:230px;height:100vh;display:flex;flex-direction:column}
+  .topbar{
+    height:60px;display:flex;align-items:center;justify-content:space-between;
+    padding:0 28px;border-bottom:1px solid var(--border);background:var(--bg-1);
+  }
+  .topbar .crumb{font-size:16px;font-weight:600}
+  .topbar .crumb .dim{color:var(--text-faint);font-weight:400;font-size:13px;margin-left:8px}
+  .user-chip{display:flex;align-items:center;gap:10px}
+  .user-chip .avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--purple),var(--blue));display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:#fff}
+  .user-chip .uname{font-size:13px}
+  .user-chip .urole{font-size:11px;color:var(--text-faint)}
+  .btn-ghost{padding:7px 14px;font-size:12px;font-family:var(--font);border:1px solid var(--border);background:transparent;color:var(--text-dim);border-radius:8px;cursor:pointer;transition:.18s}
+  .btn-ghost:hover{border-color:var(--red);color:var(--red)}
+
+  .content{flex:1;overflow-y:auto;padding:28px}
+
+  /* 卡片 */
+  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-bottom:26px}
+  .stat-card{
+    background:var(--glass);backdrop-filter:blur(20px);border:1px solid var(--border);
+    border-radius:var(--radius);padding:20px;transition:.25s;position:relative;overflow:hidden;
+  }
+  .stat-card:hover{transform:translateY(-3px);border-color:var(--border-strong);box-shadow:var(--shadow)}
+  .stat-card .label{font-size:12px;color:var(--text-dim);margin-bottom:10px;display:flex;align-items:center;gap:7px}
+  .stat-card .label .dot{width:8px;height:8px;border-radius:50%}
+  .stat-card .num{font-size:30px;font-weight:700;letter-spacing:-0.5px}
+  .stat-card .unit{font-size:13px;color:var(--text-faint);margin-left:4px;font-weight:400}
+  .stat-card .bar{position:absolute;left:0;bottom:0;height:3px;width:100%;opacity:.6}
+
+  /* 通用面板 */
+  .panel{
+    background:var(--glass);backdrop-filter:blur(20px);border:1px solid var(--border);
+    border-radius:var(--radius);padding:22px;margin-bottom:20px;
+  }
+  .panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+  .panel-head h3{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .panel-head h3 .tag{font-size:11px;font-weight:400;padding:2px 8px;border-radius:6px;background:var(--cyan-soft);color:var(--cyan)}
+  .panel-head .actions{display:flex;gap:8px}
+
+  /* 表格 */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:500;font-size:12px;border-bottom:1px solid var(--border);white-space:nowrap}
+  td{padding:11px 12px;border-bottom:1px solid rgba(255,255,255,0.04)}
+  tr:hover td{background:rgba(255,255,255,0.02)}
+  .pill{padding:3px 9px;border-radius:6px;font-size:11px;font-weight:500}
+  .pill-ok{background:rgba(52,211,153,0.15);color:var(--green)}
+  .pill-warn{background:rgba(251,191,36,0.15);color:var(--amber)}
+  .pill-low{background:rgba(248,113,113,0.15);color:var(--red)}
+  .num-mono{font-family:Consolas,"SF Mono",monospace}
+
+  /* 加药推荐 */
+  .dosing-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  .dosing-item{
+    background:rgba(0,0,0,0.2);border:1px solid var(--border);border-radius:var(--radius-sm);
+    padding:16px 18px;display:flex;align-items:center;justify-content:space-between;transition:.2s;
+  }
+  .dosing-item:hover{border-color:var(--cyan);background:rgba(34,211,238,0.05)}
+  .dosing-item .name{font-size:14px;font-weight:500}
+  .dosing-item .name .desc{font-size:11px;color:var(--text-faint);margin-top:3px}
+  .dosing-item .dose{text-align:right}
+  .dosing-item .dose .v{font-size:22px;font-weight:700;color:var(--cyan);font-family:Consolas,monospace}
+  .dosing-item .dose .u{font-size:12px;color:var(--text-faint);margin-left:3px}
+  .dosing-item.corrosive{border-color:rgba(251,191,36,0.4);background:rgba(251,191,36,0.05)}
+  .dosing-item.corrosive:hover{border-color:var(--amber);background:rgba(251,191,36,0.1)}
+  .dosing-item.corrosive .v{color:var(--amber)}
+
+  /* 进水水质小卡 */
+  .quality-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px}
+  .q-item{background:rgba(0,0,0,0.2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;text-align:center}
+  .q-item .ql{font-size:11px;color:var(--text-dim);margin-bottom:6px}
+  .q-item .qv{font-size:20px;font-weight:700;font-family:Consolas,monospace}
+  .q-item .qu{font-size:11px;color:var(--text-faint)}
+
+  .empty{text-align:center;padding:40px;color:var(--text-faint);font-size:13px}
+  .spin{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--cyan);border-radius:50%;animation:rot .8s linear infinite}
+  @keyframes rot{to{transform:rotate(360deg)}}
+  .loading-row{text-align:center;padding:30px}
+  .sec{display:none}.sec.active{display:block;animation:fade .4s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .toast{position:fixed;bottom:24px;right:24px;z-index:200;padding:13px 20px;border-radius:12px;font-size:13px;box-shadow:var(--shadow);opacity:0;transform:translateY(20px);transition:.3s;pointer-events:none}
+  .toast.show{opacity:1;transform:none}
+  .toast.ok{background:rgba(52,211,153,0.15);border:1px solid var(--green);color:var(--green)}
+  .toast.err{background:rgba(248,113,113,0.15);border:1px solid var(--red);color:var(--red)}
+  @media(max-width:1100px){.stat-grid{grid-template-columns:repeat(2,1fr)}.quality-grid{grid-template-columns:repeat(3,1fr)}.dosing-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<!-- 登录层 -->
+<div id="loginView">
+  <div class="login-card">
+    <div class="login-logo">💧</div>
+    <h1>污水处理厂运行管理系统</h1>
+    <div class="sub">管理后台 · 数据中心</div>
+    <div class="field">
+      <label>用户名</label>
+      <input id="liUser" type="text" placeholder="admin" autocomplete="username">
+    </div>
+    <div class="field">
+      <label>密码</label>
+      <input id="liPass" type="password" placeholder="admin123" autocomplete="current-password">
+    </div>
+    <button class="btn-primary" id="liBtn" onclick="doLogin()">登 录</button>
+    <div class="login-err" id="liErr"></div>
+    <div class="login-hint">
+      管理员 <code>admin / admin123</code><br>
+      厂长 <code>cz01 / 123456</code>
+    </div>
+  </div>
+</div>
+
+<!-- 主框架 -->
+<div id="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">💧</div>
+      <div><div class="t">污水厂后台</div><div class="s">v4.5.1 · 数据中心</div></div>
+    </div>
+    <nav>
+      <div class="nav-section">概览</div>
+      <div class="nav-item active" data-sec="dashboard"><span class="ico">📊</span>数据总览</div>
+      <div class="nav-section">运营</div>
+      <div class="nav-item" data-sec="inventory"><span class="ico">📦</span>药剂库存</div>
+      <div class="nav-item" data-sec="dosing"><span class="ico">🧪</span>智能加药</div>
+      <div class="nav-item" data-sec="lab"><span class="ico">🔬</span>化验数据</div>
+      <div class="nav-item" data-sec="inspect"><span class="ico">📝</span>巡检记录</div>
+      <div class="nav-section">系统</div>
+      <div class="nav-item" data-sec="rawdata"><span class="ico">🗄️</span>原始数据</div>
+    </nav>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="crumb" id="crumb">数据总览 <span class="dim" id="crumbSub">实时统计</span></div>
+      <div class="user-chip">
+        <div class="avatar" id="avatar">A</div>
+        <div>
+          <div class="uname" id="uname">—</div>
+          <div class="urole" id="urole">—</div>
+        </div>
+        <button class="btn-ghost" onclick="logout()">退出</button>
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- 数据总览 -->
+      <section class="sec active" id="sec-dashboard">
+        <div class="stat-grid" id="statGrid">
+          <div class="loading-row"><span class="spin"></span></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>📡 连接状态</h3></div>
+          <div id="connInfo" class="loading-row"><span class="spin"></span> 正在检测...</div>
+        </div>
+      </section>
+
+      <!-- 药剂库存 -->
+      <section class="sec" id="sec-inventory">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>药剂库存汇总 <span class="tag">实时</span></h3>
+            <div class="actions"><button class="btn-ghost" onclick="loadInventory()">刷新</button></div>
+          </div>
+          <div id="invTable"><div class="loading-row"><span class="spin"></span></div></div>
+        </div>
+      </section>
+
+      <!-- 智能加药 -->
+      <section class="sec" id="sec-dosing">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>智能加药分析 <span class="tag" id="dosingSrc">自动</span></h3>
+            <div class="actions"><button class="btn-primary" style="width:auto;padding:8px 16px;font-size:13px" onclick="loadDosing()">重新分析</button></div>
+          </div>
+          <div id="dosingInput"><div class="loading-row"><span class="spin"></span></div></div>
+          <div id="dosingRec" style="margin-top:18px"></div>
+        </div>
+      </section>
+
+      <!-- 化验数据 -->
+      <section class="sec" id="sec-lab">
+        <div class="panel">
+          <div class="panel-head"><h3>化验记录 <span class="tag">日化验</span></h3>
+            <div class="actions"><button class="btn-ghost" onclick="loadLab()">刷新</button></div>
+          </div>
+          <div id="labTable"><div class="loading-row"><span class="spin"></span></div></div>
+        </div>
+      </section>
+
+      <!-- 巡检记录 -->
+      <section class="sec" id="sec-inspect">
+        <div class="panel">
+          <div class="panel-head"><h3>DO 巡检记录 <span class="tag">溶解氧</span></h3>
+            <div class="actions"><button class="btn-ghost" onclick="loadInspect()">刷新</button></div>
+          </div>
+          <div id="inspectTable"><div class="loading-row"><span class="spin"></span></div></div>
+        </div>
+      </section>
+
+      <!-- 原始数据 -->
+      <section class="sec" id="sec-rawdata">
+        <div class="panel">
+          <div class="panel-head"><h3>原始数据查询</h3></div>
+          <div class="field" style="margin-bottom:16px">
+            <select id="rawEndpoint" style="padding:10px 14px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:var(--font);font-size:13px;min-width:260px">
+              <option value="/api/stats/summary">/api/stats/summary — 统计汇总</option>
+              <option value="/api/daily">/api/daily — 日常数据</option>
+              <option value="/api/inventory/summary">/api/inventory/summary — 库存汇总</option>
+              <option value="/api/inventory/low-stock">/api/inventory/low-stock — 低库存</option>
+              <option value="/api/dosing/analysis?auto=1">/api/dosing/analysis?auto=1 — 加药分析</option>
+              <option value="/api/alerts">/api/alerts — 告警</option>
+              <option value="/api/tasks">/api/tasks — 任务</option>
+            </select>
+            <button class="btn-primary" style="width:auto;padding:10px 18px;font-size:13px;margin-left:8px" onclick="loadRaw()">查询</button>
+          </div>
+          <pre id="rawOut" style="background:rgba(0,0,0,0.35);border:1px solid var(--border);border-radius:10px;padding:16px;overflow:auto;max-height:60vh;font-size:12px;line-height:1.6;font-family:Consolas,monospace;color:#9ae6d6">选择接口后点击「查询」</pre>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = 'https://sewage-manager-production.up.railway.app';
+let TOKEN = localStorage.getItem('sb_token') || '';
+let USER = null;
+try{USER=JSON.parse(localStorage.getItem('sb_user')||'null')}catch(e){}
+
+/* ---------- API ---------- */
+async function api(path, opts={}){
+  const h = {'Content-Type':'application/json'};
+  if(TOKEN) h['Authorization']='Bearer '+TOKEN;
+  const r = await fetch(API+path, {...opts, headers:{...h,...(opts.headers||{})}});
+  if(r.status===401){ logout(true); throw new Error('登录已过期'); }
+  if(!r.ok){ let m='请求失败('+r.status+')'; try{const j=await r.json();m=j.error||j.message||m}catch(e){} throw new Error(m); }
+  const ct=r.headers.get('content-type')||'';
+  return ct.includes('json')? r.json() : r.text();
+}
+function toast(msg,ok=true){const t=document.getElementById('toast');t.textContent=msg;t.className='toast show '+(ok?'ok':'err');setTimeout(()=>t.className='toast',2600)}
+
+/* ---------- 登录 ---------- */
+async function doLogin(){
+  const u=document.getElementById('liUser').value.trim();
+  const p=document.getElementById('liPass').value;
+  const err=document.getElementById('liErr');
+  const btn=document.getElementById('liBtn');
+  if(!u||!p){err.textContent='请输入用户名和密码';return}
+  btn.disabled=true;btn.textContent='登录中...';err.textContent='';
+  try{
+    const res=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:u,password:p})});
+    if(!res.token)throw new Error('未返回token');
+    TOKEN=res.token; localStorage.setItem('sb_token',TOKEN);
+    USER=res.user||{}; localStorage.setItem('sb_user',JSON.stringify(USER));
+    enterApp();
+  }catch(e){
+    err.textContent=e.message||'登录失败';
+  }finally{btn.disabled=false;btn.textContent='登 录'}
+}
+function logout(expired){
+  TOKEN='';localStorage.removeItem('sb_token');localStorage.removeItem('sb_user');
+  document.getElementById('app').style.display='none';
+  document.getElementById('loginView').style.display='flex';
+  if(expired) document.getElementById('liErr').textContent='登录已过期，请重新登录';
+}
+function enterApp(){
+  document.getElementById('loginView').style.display='none';
+  document.getElementById('app').style.display='block';
+  if(USER){
+    document.getElementById('uname').textContent=USER.name||USER.username||'—';
+    document.getElementById('urole').textContent=USER.role||USER.dept||'';
+    document.getElementById('avatar').textContent=(USER.name||USER.username||'U').charAt(0).toUpperCase();
+  }
+  loadDashboard();
+}
+
+/* ---------- 导航 ---------- */
+document.querySelectorAll('.nav-item').forEach(el=>{
+  el.onclick=()=>{
+    document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
+    el.classList.add('active');
+    const sec=el.dataset.sec;
+    document.querySelectorAll('.sec').forEach(s=>s.classList.remove('active'));
+    document.getElementById('sec-'+sec).classList.add('active');
+    document.getElementById('crumb').firstChild.textContent=el.textContent.trim();
+    const subs={dashboard:'实时统计',inventory:'药剂余额与预警',dosing:'自动推荐投加量',lab:'进出水水质化验',inspect:'溶解氧日常巡检',rawdata:'直接调用API'};
+    document.getElementById('crumbSub').textContent=subs[sec]||'';
+    if(sec==='inventory')loadInventory();
+    else if(sec==='dosing')loadDosing();
+    else if(sec==='lab')loadLab();
+    else if(sec==='inspect')loadInspect();
+  };
+});
+
+/* ---------- Dashboard ---------- */
+async function loadDashboard(){
+  const grid=document.getElementById('statGrid');grid.innerHTML='<div class="loading-row"><span class="spin"></span></div>';
+  const ci=document.getElementById('connInfo');ci.innerHTML='<span class="spin"></span> 正在检测...';
+  try{
+    const t0=Date.now();
+    const d=await api('/api/stats/summary');
+    const ms=Date.now()-t0;
+    const t=d.totals||{};
+    const cards=[
+      {label:'DO巡检记录',num:t.inspection||0,unit:'条',c:'var(--cyan)'},
+      {label:'小时水量',num:t.hourly||0,unit:'条',c:'var(--blue)'},
+      {label:'日化验数据',num:t.lab||0,unit:'条',c:'var(--green)'},
+      {label:'药剂库存流水',num:t.inventory||0,unit:'条',c:'var(--purple)'},
+    ];
+    grid.innerHTML=cards.map(c=>`
+      <div class="stat-card">
+        <div class="label"><span class="dot" style="background:${c.c}"></span>${c.label}</div>
+        <div class="num">${c.num}<span class="unit">${c.unit}</span></div>
+        <div class="bar" style="background:${c.c}"></div>
+      </div>`).join('');
+    ci.innerHTML=`
+      <table>
+        <tr><td style="color:var(--text-dim);width:160px">API 地址</td><td class="num-mono">${API}</td></tr>
+        <tr><td style="color:var(--text-dim)">响应耗时</td><td class="num-mono">${ms} ms ${ms<500?'<span class="pill pill-ok">优秀</span>':'<span class="pill pill-warn">一般</span>'}</td></tr>
+        <tr><td style="color:var(--text-dim)">系统状态</td><td><span class="pill pill-ok">● 运行正常</span></td></tr>
+        <tr><td style="color:var(--text-dim)">登录用户</td><td>${USER.name||USER.username||'—'} (${USER.role||USER.dept||'—'})</td></tr>
+      </table>`;
+    toast('数据已刷新');
+  }catch(e){grid.innerHTML=`<div class="empty">加载失败：${e.message}</div>`;ci.innerHTML=`<span style="color:var(--red)">连接失败：${e.message}</span>`}
+}
+
+/* ---------- 库存 ---------- */
+async function loadInventory(){
+  const box=document.getElementById('invTable');box.innerHTML='<div class="loading-row"><span class="spin"></span></div>';
+  try{
+    const d=await api('/api/inventory/summary');
+    const arr=Array.isArray(d)?d:(d.items||d.data||d.summary||[]);
+    if(!arr.length){box.innerHTML='<div class="empty">暂无库存数据</div>';return}
+    box.innerHTML=`
+      <table>
+        <thead><tr><th>药剂名称</th><th>当前余额</th><th>单位</th><th>状态</th><th>预警阈值</th></tr></thead>
+        <tbody>
+        ${arr.map(x=>{
+          const bal=Number(x.balance||x.currentBalance||x.amount||0);
+          const th=Number(x.threshold||x.lowStockThreshold||x.minStock||0);
+          let cls='pill-ok',st='充足';
+          if(th&&bal<=th){cls='pill-low';st='低库存'}else if(bal<500){cls='pill-warn';st='偏低'}
+          const name=x.chemicalName||x.name||x.chemical||'—';
+          const unit=x.unit||'kg';
+          return `<tr>
+            <td>${name}</td>
+            <td class="num-mono" style="font-weight:600">${bal.toLocaleString()}</td>
+            <td style="color:var(--text-dim)">${unit}</td>
+            <td><span class="pill ${cls}">${st}</span></td>
+            <td class="num-mono" style="color:var(--text-faint)">${th||'—'}</td>
+          </tr>`;
+        }).join('')}
+        </tbody>
+      </table>`;
+  }catch(e){box.innerHTML=`<div class="empty">加载失败：${e.message}</div>`}
+}
+
+/* ---------- 加药 ---------- */
+async function loadDosing(){
+  const inp=document.getElementById('dosingInput');const rec=document.getElementById('dosingRec');
+  inp.innerHTML='<div class="loading-row"><span class="spin"></span></div>';rec.innerHTML='';
+  try{
+    const d=await api('/api/dosing/analysis?auto=1');
+    const src=d.dataSource||'自动';document.getElementById('dosingSrc').textContent=src;
+    const i=d.input||d.inputs||{};
+    const items=[
+      {l:'进水流量',v:i.inFlow||i.flow||i.q,u:'m³/h'},
+      {l:'进水COD',v:i.inCod||i.cod,u:'mg/L'},
+      {l:'进水氨氮',v:i.inNh3||i.nh3,u:'mg/L'},
+      {l:'进水总氮',v:i.inTn||i.tn,u:'mg/L'},
+      {l:'进水总磷',v:i.inTp||i.tp,u:'mg/L'},
+    ].filter(x=>x.v!=null);
+    inp.innerHTML=`<div class="quality-grid">${items.map(x=>`
+      <div class="q-item"><div class="ql">${x.l}</div><div class="qv">${Number(x.v).toFixed(1)}</div><div class="qu">${x.u}</div></div>`).join('')}</div>`;
+    const r=d.recommendations||d.recs||[];
+    if(!r.length){rec.innerHTML='<div class="empty">无推荐数据</div>';return}
+    rec.innerHTML=`<div class="dosing-grid">${r.map(x=>{
+      const name=x.chemicalName||x.name||x.chemical||'药剂';
+      const dose=x.dosage||x.dose||x.amount||x.value||0;
+      const unit=x.unit||'kg/d';
+      const base=x.baseValue||x.base||0;
+      const range=x.range||[];
+      const tip=x.tip||x.reason||x.note||'';
+      const isCorrosive=name.includes('三氯化铁')||name.includes('FeCl')||name.includes('铁盐');
+      const cls=isCorrosive?'dosing-item corrosive':'dosing-item';
+      return `<div class="${cls}">
+        <div class="name">
+          ${name}
+          ${isCorrosive?'<span style="font-size:11px;color:var(--amber);margin-left:6px">⚠️腐蚀性</span>':''}
+          <div class="desc">${tip}</div>
+          ${base?`<div style="font-size:11px;color:var(--text-faint);margin-top:4px">基准:${Number(base).toFixed(1)} ${unit} | 范围:[${range.map(v=>Number(v).toFixed(1)).join('~')}]</div>`:''}
+        </div>
+        <div class="dose">
+          <span class="v">${Number(dose).toFixed(1)}</span><span class="u">${unit}</span>
+        </div>
+      </div>`;
+    }).join('')}</div>`;
+  }catch(e){inp.innerHTML=`<div class="empty">分析失败：${e.message}</div>`}
+}
+
+/* ---------- 化验 ---------- */
+async function loadLab(){
+  const box=document.getElementById('labTable');box.innerHTML='<div class="loading-row"><span class="spin"></span></div>';
+  try{
+    const d=await api('/api/daily?category=lab');
+    const arr=Array.isArray(d)?d:(d.items||d.data||d.records||[]);
+    if(!arr.length){box.innerHTML='<div class="empty">暂无化验数据</div>';return}
+    box.innerHTML=`<table>
+      <thead><tr><th>日期</th><th>进水COD</th><th>出水COD</th><th>进水氨氮</th><th>出水氨氮</th><th>总氮</th><th>总磷</th></tr></thead>
+      <tbody>${arr.slice(0,30).map(x=>{
+        const g=v=>v!=null?Number(v).toFixed(1):'—';
+        return `<tr>
+          <td class="num-mono">${x.date||x.recordDate||'—'}</td>
+          <td class="num-mono">${g(x.inCod)}</td><td class="num-mono">${g(x.outCod)}</td>
+          <td class="num-mono">${g(x.inNh3)}</td><td class="num-mono">${g(x.outNh3)}</td>
+          <td class="num-mono">${g(x.outTn||x.tn)}</td><td class="num-mono">${g(x.outTp||x.tp)}</td>
+        </tr>`}).join('')}</tbody></table>`;
+  }catch(e){box.innerHTML=`<div class="empty">加载失败：${e.message}</div>`}
+}
+
+/* ---------- 巡检 ---------- */
+async function loadInspect(){
+  const box=document.getElementById('inspectTable');box.innerHTML='<div class="loading-row"><span class="spin"></span></div>';
+  try{
+    const d=await api('/api/daily?category=inspection');
+    const arr=Array.isArray(d)?d:(d.items||d.data||d.records||[]);
+    if(!arr.length){box.innerHTML='<div class="empty">暂无巡检数据</div>';return}
+    box.innerHTML=`<table>
+      <thead><tr><th>时间</th><th>区域/池号</th><th>DO值</th><th>温度</th><th>状态</th><th>巡检人</th></tr></thead>
+      <tbody>${arr.slice(0,30).map(x=>{
+        const do_=Number(x.doValue||x.do||0);
+        let cls='pill-ok',st='正常';
+        if(do_>0&&(do_<1.5||do_>4)){cls='pill-warn';st='异常'}
+        return `<tr>
+          <td class="num-mono">${x.time||x.inspectionTime||x.date||'—'}</td>
+          <td>${x.area||x.zone||x.pool||'—'}</td>
+          <td class="num-mono">${do_?do_.toFixed(2):'—'} <span style="color:var(--text-faint)">mg/L</span></td>
+          <td class="num-mono">${x.temp||x.temperature||'—'}°C</td>
+          <td><span class="pill ${cls}">${st}</span></td>
+          <td style="color:var(--text-dim)">${x.inspector||x.operator||'—'}</td>
+        </tr>`}).join('')}</tbody></table>`;
+  }catch(e){box.innerHTML=`<div class="empty">加载失败：${e.message}</div>`}
+}
+
+/* ---------- 原始数据 ---------- */
+async function loadRaw(){
+  const ep=document.getElementById('rawEndpoint').value;
+  const out=document.getElementById('rawOut');out.textContent='查询中...';
+  try{
+    const d=await api(ep);
+    out.textContent=JSON.stringify(d,null,2);
+  }catch(e){out.textContent='错误：'+e.message}
+}
+
+/* ---------- 回车登录 ---------- */
+document.getElementById('liPass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
+document.getElementById('liUser').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('liPass').focus()});
+
+/* ---------- 自动登录 ---------- */
+if(TOKEN){
+  // 验证token有效性
+  api('/api/auth/me').then(u=>{USER=u.user||u||USER;localStorage.setItem('sb_user',JSON.stringify(USER));enterApp()}).catch(()=>logout(true));
+}else{
+  document.getElementById('liUser').value='admin';
+}
+</script>
+</body>
+</html>
