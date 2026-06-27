@@ -1210,7 +1210,7 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
   // --- PAC（除磷） ---
   const targetTpEffluent = 0.5;
   const tpToRemove = Math.max(0, (inTp || 0) - targetTpEffluent);
-  let pacBase = tpToRemove * 2.2 * (27 / 31) * (inFlow || 0) / 500;
+  let pacBase = Math.round(tpToRemove * (inFlow || 0) / 1000 * 1.3 / 0.29 * (102 / 54) * 100) / 100; // 治污者说专业公式：去除1kgP需1.3kgAl，PAC(29%)投加量=总磷去除量×8.48
 
   let pacSludgeAdjust = 1.0;
   if (sludgeStatus.svi.status.includes('偏高')) {
