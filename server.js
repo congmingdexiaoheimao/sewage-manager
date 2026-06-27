@@ -358,7 +358,7 @@ function initDB() {
     console.log('  生成 daily_lab: ' + dlItems.length + ' 条');
 
     // 4. 药剂投加 - 30天 x 2班次
-    const insertCD = db.prepare('INSERT OR IGNORE INTO chemical_dosing (id,date,shift,operator,carbonSource,glucose,pac,anionPam,cationPam,naclo,groupId,createTime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
+    const insertCD = db.prepare('INSERT OR IGNORE INTO chemical_dosing (id,date,shift,operator,carbonSource,glucose,pac,anionPam,cationPam,naclo,groupId,createTime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
     const insertCDMany = db.transaction((items) => { for (const i of items) insertCD.run(...i); });
     const cdItems = [];
     for (let day = 29; day >= 0; day--) {
