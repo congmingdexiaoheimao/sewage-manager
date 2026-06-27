@@ -1175,23 +1175,31 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
   });
 
   // ===== Step 6: 核心计算 =====
+  // ===== Step 6: 核心计算（基于治污者说专业知识） =====
   const diagnosisLog = [];
 
-  // --- 碳源 ---
+  // --- 碳源（甲醇/乙酸钠/葡萄糖） ---
+  // 专业知识：Cm = 5 × N（德国ATV131标准），反硝化1kg NO3-N需5kg COD外部碳源
+  // 甲醇COD当量1.5kgCOD/kg，乙酸钠0.68kgCOD/kg，葡萄糖0.6kgCOD/kg
+  // BOD5/TN > 3~5时不需要外加碳源
   const targetTnEffluent = 15;
   const tnToRemove = Math.max(0, (inTn || 0) - targetTnEffluent);
-  let carbonBase = tnToRemove * 5 * (inFlow || 0) / 1000;
+  const codRequired = tnToRemove * 5 * (inFlow || 0) / 1000; // 所需外部COD量 kgCOD/d
 
-  let carbonSludgeAdjust = 1.0;
+  // 碳源选项（基于COD当量计算）
+  const methanolBase = codRequired / 1.5;          // 甲醇投加量 kg/d (COD当量1.5)
+  const naAcetateBase = codRequired / 0.68;        // 乙酸钠投加量 kg/d (COD当量0.68)
+  const glucoseBaseCalc = codRequired / 0.6;        // 葡萄糖投加量 kg/d (COD当量0.6)
+
+  let carbonAdjust = 1.0;
   if (sludgeStatus.svi.status.includes('偏高')) {
-    carbonSludgeAdjust = 1.15;
+    carbonAdjust = 1.15;
     diagnosisLog.push('⚠️ SVI偏高(' + (sludgeStatus.svi.avg || '-') + 'mL/g)，污泥沉降性差，碳源投加调增15%以补偿反硝化效率下降');
   }
   if (sludgeStatus.mlss.status === '偏低') {
-    carbonSludgeAdjust = Math.max(carbonSludgeAdjust, 1.10);
+    carbonAdjust = Math.max(carbonAdjust, 1.10);
     diagnosisLog.push('⚠️ MLSS偏低(' + (sludgeStatus.mlss.avg || '-') + 'mg/L)，生化系统污泥浓度不足，碳源调增10%');
   }
-
   let carbonTrendAdjust = 1.0;
   if (waterTrends.inTn.trend === '上升') {
     carbonTrendAdjust = 1.12;
@@ -1201,27 +1209,27 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
     diagnosisLog.push('📉 进水TN呈下降趋势，碳源可适度调减10%');
   }
 
-  const carbonSource = Math.round(carbonBase * carbonSludgeAdjust * carbonTrendAdjust * 100) / 100;
+  const carbonSource = Math.round(methanolBase * carbonAdjust * carbonTrendAdjust * 100) / 100;
+  const glucose = Math.round(glucoseBaseCalc * carbonAdjust * carbonTrendAdjust * 100) / 100;
 
-  // --- 葡萄糖 ---
-  const glucoseBase = carbonBase * 1.2;
-  const glucose = Math.round(glucoseBase * carbonSludgeAdjust * carbonTrendAdjust * 100) / 100;
-
-  // --- PAC（除磷） ---
+  // --- PAC（聚合氯化铝）除磷 ---
+  // 专业知识：去除1kg P需1.3kg Al（β=1.5），PAC（29% Al2O3）投加量 = 总磷去除量 × 8.48
+  // 计算：1kgP → 1.3kgAl → 1.3/(54/102)/0.29 = 8.48kg PAC(29%)
   const targetTpEffluent = 0.5;
   const tpToRemove = Math.max(0, (inTp || 0) - targetTpEffluent);
-  let pacBase = tpToRemove * 2.2 * (27 / 31) * (inFlow || 0) / 500;
+  const pRemoveKg = tpToRemove * (inFlow || 0) / 1000; // 每日需去除的总磷量 kgP/d
+  const alRequired = pRemoveKg * 1.3;                   // 所需铝量 kgAl/d
+  const pacBase = Math.round(alRequired / 0.29 * (102 / 54) * 100) / 100; // PAC(29%)投加量 kg/d
 
-  let pacSludgeAdjust = 1.0;
+  let pacAdjust = 1.0;
   if (sludgeStatus.svi.status.includes('偏高')) {
-    pacSludgeAdjust = 1.20;
+    pacAdjust = 1.20;
     diagnosisLog.push('⚠️ SVI偏高，PAC投加调增20%以改善污泥沉降性能（兼除磷+助凝）');
   }
   if (sludgeStatus.mlss.status === '偏高') {
-    pacSludgeAdjust = 0.85;
+    pacAdjust = 0.85;
     diagnosisLog.push('ℹ️ MLSS偏高(' + (sludgeStatus.mlss.avg || '-') + 'mg/L)，生化除磷能力较强，PAC可适度调减15%');
   }
-
   let pacTrendAdjust = 1.0;
   if (waterTrends.inTp.trend === '上升') {
     pacTrendAdjust = 1.15;
@@ -1234,26 +1242,32 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
     pacTrendAdjust = Math.max(pacTrendAdjust, 1.15);
     diagnosisLog.push('🚨 出水TP均值(' + waterTrends.outTp.avg + 'mg/L)接近限值(0.5mg/L)，PAC紧急调增');
   }
+  const pac = Math.round(pacBase * pacAdjust * pacTrendAdjust * 100) / 100;
 
-  const pac = Math.round(pacBase * pacSludgeAdjust * pacTrendAdjust * 100) / 100;
+  // --- 铁盐（三氯化铁）除磷（PAC替代选项） ---
+  // 专业知识：去除1kg P需2.7kg Fe（β=1.5），FeCl3(40%)投加量 = 总磷去除量 × 19.6
+  const feCl3Base = Math.round(pRemoveKg * 2.7 / 0.40 * (162.5 / 56) * 100) / 100; // FeCl3(40%) kg/d
+  const feCl3 = Math.round(feCl3Base * pacAdjust * pacTrendAdjust * 100) / 100;
 
-  // --- 阴离子PAM ---
-  let anionBase = (inFlow || 0) * 0.002;
+  // --- 阴离子PAM（污泥脱水） ---
+  // 专业知识：PAM投加量一般为绝干污泥量的0.1%~0.3%
+  const drySludgeEst = (inFlow || 0) * 0.0015; // 估算绝干污泥量 kgDS/d（经验值1.5kgDS/m3）
+  let anionBase = drySludgeEst * 0.002;         // 0.2% 投加率
   if (sludgeStatus.svi.status.includes('偏高')) {
     anionBase *= 1.3;
     diagnosisLog.push('⚠️ SVI偏高，阴离子PAM调增30%以改善污泥脱水性能');
   }
   const anionPam = Math.round(anionBase * 100) / 100;
 
-  // --- 阳离子PAM ---
-  let cationBase = (inFlow || 0) * 0.001;
+  // --- 阳离子PAM（污泥调理） ---
+  let cationBase = drySludgeEst * 0.001;         // 0.1% 投加率
   if (sludgeStatus.svi.status.includes('偏高')) {
     cationBase *= 1.25;
     diagnosisLog.push('⚠️ SVI偏高，阳离子PAM调增25%以辅助污泥调理');
   }
   const cationPam = Math.round(cationBase * 100) / 100;
 
-  // --- 次氯酸钠 ---
+  // --- 次氯酸钠（消毒/COD去除） ---
   let nacloBase = (inFlow || 0) * 0.005;
   if (waterTrends.outCod.avg && waterTrends.outCod.avg > 40) {
     nacloBase *= 1.15;
@@ -1261,7 +1275,6 @@ app.get('/api/dosing/analysis', authMiddleware, (req, res) => {
   }
   const naclo = Math.round(nacloBase * 100) / 100;
 
-  // ===== Step 7: 与历史投加量对比 =====
   const compareWithHistory = (key, value) => {
     const hist = dosingStats[key];
     if (!hist || hist.count < 3) return { comparison: '历史数据不足', deviation: null, suggestion: '' };
