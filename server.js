@@ -1483,7 +1483,7 @@ app.get('/api/export/:table', authMiddleware, async (req, res) => {
     const sheet = workbook.addWorksheet(table);
     if (data.length > 0) {
       const keys = Object.keys(data[0]).filter(k => !k.startsWith('_'));
-      sheet.columns = keys.map(k => ({ header: k, key: k, width: 15 }));
+      sheet.columns = keys.map(k => ({ header: (CHINESE_FIELDS[table] || {})[k] || k, key: k, width: 15 }));
       data.forEach(row => sheet.addRow(row));
       sheet.getRow(1).font = { bold: true };
       sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
