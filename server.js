@@ -2820,6 +2820,7 @@ app.get('/api/report/analysis/export', authMiddleware, async (req, res) => {
     const token = req.headers.authorization?.replace('Bearer ', '') || '';
     const analysisRes = await fetch(analysisUrl, { headers: { Authorization: 'Bearer ' + token } });
     const data = await analysisRes.json();
+    if (data.error) return res.status(500).json({ error: '分析接口失败：' + data.error });
 
     // 生成 HTML 格式报告（可在浏览器中打印为 PDF）
     const r2 = v => v !== null && v !== undefined && !isNaN(v) ? v : '-';
