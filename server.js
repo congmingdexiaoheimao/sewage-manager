@@ -478,7 +478,11 @@ app.get('/api/fields/:table', authMiddleware, (req, res) => {
 
 // ==================== 认证中间件 ====================
 function authMiddleware(req, res, next) {
-  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+  // 支持三种传 token 方式：Authorization header / ?token=xxx / cookie
+  const token =
+    (req.headers.authorization || '').replace('Bearer ', '').trim() ||
+    (req.query.token || '').trim() ||
+    (req.cookies && req.cookies.token) || '';
   const session = sessions.get(token);
   if (!session || session.expires < Date.now()) {
     if (session) sessions.delete(token);
